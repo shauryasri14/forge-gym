@@ -176,6 +176,10 @@ i.pad { width: 11px; height: 11px; }
 .hero-ctl .muted { margin-left: auto; }
 .ex-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
 .star-btn { font-size: 26px; color: var(--line); line-height: 1; padding: 4px; } .star-btn.on { color: #ffb020; }
+.vposter, .vframe { position: relative; display: block; width: min(100%, 340px); aspect-ratio: 9 / 16; max-height: 72vh; margin: 0 auto; border-radius: 14px; overflow: hidden; background: #000; }
+.vposter img { width: 100%; height: 100%; object-fit: cover; opacity: .9; }
+.vplay { position: absolute; inset: 0; margin: auto; width: 64px; height: 64px; border-radius: 50%; background: rgba(255, 0, 51, .92); color: #fff; display: grid; place-items: center; font-size: 24px; padding-left: 4px; }
+.vframe iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
 details.mini summary { font-size: 13px; color: var(--muted); cursor: pointer; }
 details.mini form { margin-top: 8px; }
 .steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; }

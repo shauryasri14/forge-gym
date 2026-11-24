@@ -23,6 +23,15 @@ const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct
 const fmtDay = (k) => { const d = S.parseDay(k); return `${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()]}, ${MON[d.getMonth()]} ${d.getDate()}`; };
 const fmtDur = (ms) => { const m = Math.round(ms / 60000); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`; };
 const clock = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+// Anatomy videos: exercise id -> YouTube video id (data/videos.json), or the user's own saved link.
+let VIDEOS = { videos: {} };
+const CHANNEL = '@anatomystandard';
+function ytId(u) {
+  const m = String(u || '').match(/(?:youtu\.be\/|youtube(?:-nocookie)?\.com\/(?:shorts\/|embed\/|live\/|watch\?(?:.*&)?v=))([\w-]{11})/);
+  return m ? m[1] : null;
+}
+const videoFor = (e) => ytId(S.get().links[e.id]) || VIDEOS.videos[e.id] || null;
+const channelSearch = (e) => `https://www.youtube.com/${CHANNEL}/search?query=${encodeURIComponent(e.name.replace(/\s*-\s*.*$/, ''))}`;
 const ytUrl = (e) => S.get().links[e.id] || `https://www.youtube.com/results?search_query=${encodeURIComponent(e.name + ' exercise proper form')}`;
 let cleanups = [];
 const onLeave = (f) => cleanups.push(f);
@@ -282,8 +291,7 @@ function viewExercise(main, id) {
       <a class="btn yt" href="${esc(ytUrl(e))}" target="_blank" rel="noopener"><span class="yt-i">▶</span> Watch form video</a>
       <button class="btn primary" id="add">${st.active ? 'Add to workout' : 'Start with this'}</button>
     </div>
-    <details class="mini"><summary>${st.links[e.id] ? 'Using your saved video link' : 'Opens a YouTube search · save a specific video'}</summary>
-      <form class="row gap" id="lk"><input class="inp" name="u" type="url" placeholder="Paste a YouTube link" value="${esc(st.links[e.id] || '')}"><button class="btn sm">Save</button></form></details>
+    <section class="card" id="vid"></section>
     ${(e.ins || []).length ? `<section class="card"><h3>How to do it</h3><ol class="steps">${e.ins.map((s) => `<li>${esc(s)}</li>`).join('')}</ol></section>` : ''}
     <section class="card" id="hist"></section>
     ${e.custom ? `<div class="row gap"><a class="btn ghost" href="#/custom/${encodeURIComponent(e.id)}">Edit</a><button class="btn ghost danger-t" id="del">Delete exercise</button></div>` : ''}`;
@@ -303,14 +311,7 @@ function viewExercise(main, id) {
     ev.currentTarget.classList.toggle('on', S.get().favorites.includes(e.id));
   };
   $('#add').onclick = () => { addToWorkout([e.id]); go('#/workout'); };
-  $('#lk').onsubmit = (ev) => {
-    ev.preventDefault();
-    const u = ev.target.u.value.trim();
-    if (u && !/^https?:\/\//i.test(u)) return toast('That doesn’t look like a link');
-    S.update((x) => { if (u) x.links[e.id] = u; else delete x.links[e.id]; });
-    $('.btn.yt').href = ytUrl(e);
-    toast(u ? 'Video link saved' : 'Back to YouTube search');
-  };
+  drawVideo(e);
   $('#del')?.addEventListener('click', async () => {
     if (!(await ask(`Delete “${e.name}”? Past workouts keep their sets.`, 'Delete', true))) return;
     S.update((x) => { x.custom = x.custom.filter((c) => c.id !== e.id); });
@@ -335,6 +336,32 @@ function viewExercise(main, id) {
       <div><span class="muted small">Sessions</span><b>${hist.length}</b><small>logged</small></div></div>
     ${pts.length > 1 ? spark(pts, bestE.v ? 'Best est. 1RM per session' : 'Best reps per session') : ''}
     <ul class="hist-l">${hist.slice(0, 6).map((x) => `<li><span class="muted">${fmtDay(x.date)}</span><span>${x.sets.map((s) => `${s.w ? S.toDisplay(s.w) : 'BW'}×${s.r || 0}`).join(', ')}</span></li>`).join('')}</ul>`;
+}
+
+// Anatomy video card: a poster that turns into an embedded YouTube player on tap (no iframe, and
+// nothing loaded from YouTube, until then).
+function drawVideo(e) {
+  const box = $('#vid'), id = videoFor(e), own = !!ytId(S.get().links[e.id]);
+  box.innerHTML = `<div class="sec-h"><h3>Anatomy video</h3>${id ? `<span class="muted small">${own ? 'Your link' : 'Anatomy Standard'}</span>` : ''}</div>
+    ${id ? `<button class="vposter" aria-label="Play anatomy video"><img src="https://i.ytimg.com/vi/${id}/hqdefault.jpg" alt="" loading="lazy"><span class="vplay">▶</span></button>`
+      : `<p class="muted small">No anatomy video linked for this exercise yet. Find one on the Anatomy Standard channel, copy its link, and paste it below.</p>
+         <a class="btn" href="${esc(channelSearch(e))}" target="_blank" rel="noopener"><span class="yt-i">▶</span> Find on Anatomy Standard</a>`}
+    <details class="mini"${id ? '' : ' open'}><summary>${own ? 'Change your video link' : id ? 'Use a different video' : 'Paste a video link'}</summary>
+      <form class="row gap" id="lk"><input class="inp" name="u" type="url" placeholder="youtube.com/shorts/…" value="${esc(S.get().links[e.id] || '')}"><button class="btn sm">Save</button></form></details>`;
+  $('.vposter', box)?.addEventListener('click', (ev) => {
+    if (!navigator.onLine) return toast('Videos need an internet connection');
+    ev.currentTarget.outerHTML = `<div class="vframe"><iframe src="https://www.youtube-nocookie.com/embed/${id}?autoplay=1&playsinline=1&rel=0&loop=1&playlist=${id}"
+      title="${esc(e.name)} anatomy video" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe></div>`;
+  });
+  $('#lk', box).onsubmit = (ev) => {
+    ev.preventDefault();
+    const u = ev.target.u.value.trim();
+    if (u && !ytId(u)) return toast('Paste a YouTube video or Shorts link');
+    S.update((x) => { if (u) x.links[e.id] = u; else delete x.links[e.id]; });
+    $('.btn.yt').href = ytUrl(e);
+    toast(u ? 'Video saved for this exercise' : 'Video link removed');
+    drawVideo(e);
+  };
 }
 
 function spark(pts, label) {
@@ -701,6 +728,7 @@ async function boot() {
   try {
     const r = await fetch('data/exercises.json');
     DB = await r.json();
+    try { VIDEOS = await (await fetch('data/videos.json')).json(); } catch { /* videos are optional */ }
   } catch (e) {
     $('#view').innerHTML = '<div class="empty"><p>Couldn’t load the exercise list.</p><p class="muted small">Open the app once while online so it can save itself for offline use.</p></div>';
     return;
