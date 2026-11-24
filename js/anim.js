@@ -1,4 +1,5 @@
-// Stick-figure exercise animations, drawn as SVG.
+// Exercise motion: keyframe poses, solved into 2D joint positions that js/body3d.js turns into a
+// posed 3D muscle model.
 //
 // A pattern is a list of keyframe poses. The player eases between them (ping-pong by default,
 // or `loop: true` for cycles like running). Side-view poses are solved with forward kinematics
@@ -10,7 +11,6 @@
 
 export const G = 200; // ground line
 const L = { torso: 50, neck: 6, head: 10, ua: 27, fa: 25, th: 38, sh: 36, ft: 13 };
-const SVGNS = 'http://www.w3.org/2000/svg';
 
 const rad = (d) => (d * Math.PI) / 180;
 const dir = (a) => [Math.sin(rad(a)), Math.cos(rad(a))];
@@ -115,167 +115,37 @@ function lerpPose(a, b, t) {
 
 const ease = (t) => (t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2);
 
-// ---------------------------------------------------------------- drawing
-function el(tag, attrs, parent) {
-  const e = document.createElementNS(SVGNS, tag);
-  for (const k in attrs) e.setAttribute(k, attrs[k]);
-  if (parent) parent.appendChild(e);
-  return e;
-}
-const line = (g, a, b, cls) => el('line', { x1: a[0].toFixed(1), y1: a[1].toFixed(1), x2: b[0].toFixed(1), y2: b[1].toFixed(1), class: cls }, g);
-const poly = (g, pts, cls) => el('polyline', { points: pts.map((p) => p.map((v) => v.toFixed(1)).join(',')).join(' '), class: cls }, g);
-
-function drawProps(g, props) {
-  for (const pr of props || []) {
-    switch (pr.k) {
-      case 'bench': { // flat or inclined pad + legs
-        const [x1, y1] = pr.a, [x2, y2] = pr.b;
-        poly(g, [pr.a, pr.b], 'eq pad');
-        line(g, [(x1 + x2) / 2 - 20, Math.max(y1, y2) + 3], [(x1 + x2) / 2 - 24, G], 'eq thin');
-        line(g, [(x1 + x2) / 2 + 20, Math.max(y1, y2) + 3], [(x1 + x2) / 2 + 24, G], 'eq thin');
-        break;
-      }
-      case 'bar': line(g, [pr.x1, pr.y], [pr.x2, pr.y], 'eq rod'); line(g, [pr.x1, pr.y], [pr.x1, G], 'eq thin'); line(g, [pr.x2, pr.y], [pr.x2, G], 'eq thin'); break;
-      case 'box': el('rect', { x: pr.x, y: pr.y, width: pr.w, height: G - pr.y, rx: 3, class: 'eq box' }, g); break;
-      case 'roller': el('circle', { cx: pr.x, cy: G - 9, r: 9, class: 'eq box' }, g); break;
-      case 'ball': el('circle', { cx: pr.x, cy: pr.y, r: pr.r, class: 'eq box' }, g); break;
-      case 'bike': {
-        el('circle', { cx: pr.x, cy: pr.y, r: 22, class: 'eq thin' }, g);
-        line(g, [pr.sx, pr.sy], [pr.x, pr.y], 'eq thin');
-        line(g, [pr.sx - 9, pr.sy], [pr.sx + 9, pr.sy], 'eq rod');
-        line(g, [pr.x, pr.y], [pr.x - 30, G], 'eq thin'); line(g, [pr.x, pr.y], [pr.x + 30, G], 'eq thin');
-        break;
-      }
-      case 'line': line(g, pr.a, pr.b, 'eq ' + (pr.cls || 'thin')); break;
-    }
-  }
-}
-
-function drawHeld(g, kind, hand, anchor, far) {
-  const c = far ? ' far' : '';
-  switch (kind) {
-    case 'barbell':
-      if (far) return;
-      el('circle', { cx: hand[0], cy: hand[1], r: 19, class: 'eq plate' }, g);
-      el('circle', { cx: hand[0], cy: hand[1], r: 3, class: 'eq hub' }, g);
-      break;
-    case 'ezbar':
-      if (far) return;
-      el('circle', { cx: hand[0], cy: hand[1], r: 13, class: 'eq plate' }, g);
-      el('circle', { cx: hand[0], cy: hand[1], r: 2.5, class: 'eq hub' }, g);
-      break;
-    case 'dumbbell':
-      el('rect', { x: hand[0] - 9, y: hand[1] - 4.5, width: 18, height: 9, rx: 3, class: 'eq db' + c }, g);
-      break;
-    case 'kettlebell':
-      el('circle', { cx: hand[0], cy: hand[1] + 9, r: 7.5, class: 'eq db' + c }, g);
-      line(g, hand, [hand[0], hand[1] + 3], 'eq thin' + c);
-      break;
-    case 'medball':
-      if (far) return;
-      el('circle', { cx: hand[0], cy: hand[1], r: 9, class: 'eq db' }, g);
-      break;
-    case 'cable': case 'band': case 'machine':
-      if (anchor) line(g, hand, anchor, (kind === 'band' ? 'eq band' : 'eq cable') + c);
-      el('rect', { x: hand[0] - 3.5, y: hand[1] - 3.5, width: 7, height: 7, rx: 1.5, class: 'eq db' + c }, g);
-      break;
-  }
-}
-
-function drawAnchor(g, kind, anchor) {
-  if (!anchor || !['cable', 'machine'].includes(kind)) return;
-  line(g, [anchor[0] + 6, 6], [anchor[0] + 6, G], 'eq thin');
-  el('circle', { cx: anchor[0], cy: anchor[1], r: 4, class: 'eq hub' }, g);
-}
-
-function drawFigure(g, s, hold, anchor, holdAt, plate) {
-  const limb = (pts, cls) => poly(g, pts, cls);
-  if (s.view === 'front') {
-    for (const k of ['legL', 'legR']) limb([s[k].hip, s[k].knee, s[k].ank, s[k].toe], 'limb');
-    line(g, s.legL.hip, s.legR.hip, 'limb');
-    limb([s.hip, s.sho], 'torso');
-    line(g, s.armL.sho, s.armR.sho, 'limb');
-    for (const k of ['armL', 'armR']) limb([s[k].sho, s[k].elb, s[k].hand], 'limb');
-    el('circle', { cx: s.head[0], cy: s.head[1], r: L.head, class: 'head' }, g);
-    for (const k of ['armL', 'armR']) drawHeld(g, hold === 'barbell' ? 'dumbbell' : hold, s[k].hand, anchor, false);
-    return;
-  }
-  // far limbs first, dimmed
-  limb([s.hip, s.leg2.knee, s.leg2.ank, s.leg2.toe], 'limb far');
-  if (holdAt !== 'none') drawHeld(g, hold, s.arm2.hand, anchor, true);
-  limb([s.sho, s.arm2.elb, s.arm2.hand], 'limb far');
-  limb([s.hip, s.leg1.knee, s.leg1.ank, s.leg1.toe], 'limb');
-  limb([s.hip, s.sho, s.neck], 'torso');
-  el('circle', { cx: s.head[0], cy: s.head[1], r: L.head, class: 'head' }, g);
-  limb([s.sho, s.arm1.elb, s.arm1.hand], 'limb');
-  if (holdAt !== 'none') drawHeld(g, hold, s.arm1.hand, anchor, false);
-  if (plate != null) {
-    const t = s.leg1.toe, a = mv(t, plate, 22), b = mv(t, plate, -22);
-    line(g, a, b, 'eq rod');
-  }
-}
-
-// Equipment string from the exercise database -> what to draw in the hands.
+// ---------------------------------------------------------------- timing
+// Equipment string from the exercise database -> what the body holds.
 export function holdFor(equipment) {
   return ({ barbell: 'barbell', 'e-z curl bar': 'ezbar', dumbbell: 'dumbbell', kettlebells: 'kettlebell',
     cable: 'cable', bands: 'band', machine: 'machine', 'medicine ball': 'medball' })[equipment] || 'none';
 }
 
-export function renderPose(svg, pattern, frame, hold) {
-  while (svg.firstChild) svg.removeChild(svg.firstChild);
-  const g = el('g', {}, svg);
-  line(g, [8, G + 1], [232, G + 1], 'ground');
-  drawProps(g, pattern.props);
-  const kind = pattern.hold === 'none' ? 'none' : (pattern.forceHold || hold);
-  const anchor = kind === 'band' ? (pattern.band || pattern.anchor) : pattern.anchor;
-  drawAnchor(g, kind, anchor);
-  drawFigure(g, solve(frame, pattern.view), kind, ['cable', 'band', 'machine'].includes(kind) ? anchor : null, pattern.hold, pattern.plate);
+export const workFrame = (pat) => pat.thumb ?? Math.min(1, pat.frames.length - 1);
+
+// Pose at time `ms` (ping-pong through the keyframes, or loop), plus `effort` 0..1: how close the
+// body is to the working end of the rep, which drives how strongly the muscles light up.
+export function poseAt(pat, ms) {
+  const fr = pat.frames, n = fr.length, w = workFrame(pat);
+  if (n === 1) return { pose: fr[0], effort: 1 };
+  const seg = pat.dur || 900, hold = pat.pause ?? 260;
+  const steps = pat.loop ? n : (n - 1) * 2;
+  const span = seg + (pat.loop ? 0 : hold);
+  const pos = (ms % (steps * span)) / span;
+  const i = Math.floor(pos);
+  const local = Math.min(1, ((pos - i) * span) / seg);
+  let a, b;
+  if (pat.loop) { a = i % n; b = (i + 1) % n; } else {
+    const seq = [...Array(n).keys(), ...[...Array(n - 1).keys()].reverse().slice(0, n - 2).map((k) => k + 1)];
+    a = seq[i % seq.length]; b = seq[(i + 1) % seq.length];
+  }
+  const t = pat.loop ? local : ease(local);
+  const effort = pat.loop ? 0.75 + 0.25 * Math.sin(ms / 160) : (a === w ? 1 - t : 0) + (b === w ? t : 0);
+  return { pose: lerpPose(fr[a], fr[b], t), effort };
 }
 
-// Static snapshot (the "working" end of the movement) for list thumbnails.
-export function snapshot(svg, patternId, hold) {
-  const pat = PATTERNS[patternId] || PATTERNS.generic;
-  const f = pat.frames[pat.thumb ?? Math.min(1, pat.frames.length - 1)];
-  renderPose(svg, pat, f, hold);
-}
-
-export class Player {
-  constructor(svg, patternId, hold) {
-    this.svg = svg; this.hold = hold; this.speed = 1; this.playing = false; this.t0 = 0; this.acc = 0;
-    this.set(patternId);
-  }
-  set(patternId) {
-    this.pat = PATTERNS[patternId] || PATTERNS.generic;
-    this.acc = 0; this.draw(0);
-  }
-  play() { if (this.playing) return; this.playing = true; this.last = performance.now(); this.tick(); }
-  pause() { this.playing = false; cancelAnimationFrame(this.raf); }
-  toggle() { this.playing ? this.pause() : this.play(); return this.playing; }
-  destroy() { this.pause(); }
-  tick() {
-    if (!this.playing) return;
-    const now = performance.now();
-    this.acc += (now - this.last) * this.speed; this.last = now;
-    this.draw(this.acc);
-    this.raf = requestAnimationFrame(() => this.tick());
-  }
-  draw(ms) {
-    const p = this.pat, fr = p.frames, n = fr.length;
-    if (n === 1) return renderPose(this.svg, p, fr[0], this.hold);
-    const seg = p.dur || 900, hold = p.pause ?? 260;
-    const steps = p.loop ? n : (n - 1) * 2; // ping-pong visits every frame back and forth
-    const span = seg + (p.loop ? 0 : hold);
-    const pos = (ms % (steps * span)) / span;
-    const i = Math.floor(pos);
-    const local = Math.min(1, ((pos - i) * span) / seg);
-    let a, b;
-    if (p.loop) { a = i % n; b = (i + 1) % n; } else {
-      const seq = [...Array(n).keys(), ...[...Array(n - 1).keys()].reverse().slice(0, n - 2).map((k) => k + 1)];
-      a = seq[i % seq.length]; b = seq[(i + 1) % seq.length];
-    }
-    renderPose(this.svg, p, lerpPose(fr[a], fr[b], p.loop ? local : ease(local)), this.hold);
-  }
-}
+export { solve };
 
 // ---------------------------------------------------------------- pattern library
 const ST = { root: 'ankle', at: [112, 196] }; // standing, near ankle fixed
@@ -315,11 +185,11 @@ export const PATTERNS = {
     { root: 'hip', at: [92, 134], t: 180, th: 90, sh: 0, ua: 30, fa: 90 },
     { root: 'hip', at: [92, 124], t: 180, th: 82, sh: 0, ft: 45, ua: 30, fa: 90 },
   ] },
-  bridge: { name: 'Glute bridge / hip thrust', frames: [
+  bridge: { name: 'Glute bridge / hip thrust', supine: true, frames: [
     { root: 'hip', at: [112, 186], t: 98, foot: [70, 194], kb: -1, hand: [118, 180] },
     { root: 'hip', at: [112, 162], t: 58, foot: [70, 194], kb: -1, hand: [118, 158] },
   ] },
-  hipThrust: { name: 'Hip thrust', props: [{ k: 'bench', a: [150, 150], b: [200, 150] }], frames: [
+  hipThrust: { name: 'Hip thrust', supine: true, props: [{ k: 'bench', a: [150, 150], b: [200, 150] }], frames: [
     { root: 'hip', at: [126, 184], t: 132, foot: [76, 194], kb: -1, hand: [130, 178] },
     { root: 'hip', at: [114, 150], t: 92, foot: [76, 194], kb: -1, hand: [118, 144] },
   ] },
@@ -347,7 +217,7 @@ export const PATTERNS = {
     { root: 'hip', at: [100, 166], t: 162, foot: [176, 172], kb: 1, ua: 82, fa: 88 },
     { root: 'hip', at: [100, 166], t: 186, foot: [176, 172], kb: 1, ua: -35, fa: 85 },
   ] },
-  invertedRow: { name: 'Inverted row', hold: 'none', props: [{ k: 'bar', x1: 110, x2: 200, y: 120 }], frames: [
+  invertedRow: { name: 'Inverted row', supine: true, hold: 'none', props: [{ k: 'bar', x1: 110, x2: 200, y: 120 }], frames: [
     { root: 'ankle', at: [40, 192], th: -70, sh: -70, t: 110, ft: 10, hand: [150, 120], eb: -1 },
     { root: 'ankle', at: [40, 192], th: -82, sh: -82, t: 98, ft: 10, hand: [150, 120], eb: -1 },
   ] },
@@ -374,23 +244,23 @@ export const PATTERNS = {
   ] },
 
   // ---- chest / push
-  bench: { name: 'Bench press', props: [benchFlat], frames: [
+  bench: { name: 'Bench press', supine: true, props: [benchFlat], frames: [
     { root: 'hip', at: [76, 144], t: 90, foot: [44, 194], kb: 1, hand: [122, 90], eb: 1 },
     { root: 'hip', at: [76, 144], t: 90, foot: [44, 194], kb: 1, hand: [117, 128], eb: 1 },
   ] },
-  inclineBench: { name: 'Incline press', props: [{ k: 'bench', a: [70, 160], b: [150, 106] }], frames: [
+  inclineBench: { name: 'Incline press', supine: true, props: [{ k: 'bench', a: [70, 160], b: [150, 106] }], frames: [
     { root: 'hip', at: [88, 150], t: 124, foot: [52, 194], kb: 1, hand: [136, 66], eb: 1 },
     { root: 'hip', at: [88, 150], t: 124, foot: [52, 194], kb: 1, hand: [128, 104], eb: 1 },
   ] },
-  declineBench: { name: 'Decline press', props: [{ k: 'bench', a: [56, 128], b: [168, 162] }], frames: [
+  declineBench: { name: 'Decline press', supine: true, props: [{ k: 'bench', a: [56, 128], b: [168, 162] }], frames: [
     { root: 'hip', at: [80, 122], t: 72, th: -150, sh: -40, ft: -10, hand: [130, 88], eb: 1 },
     { root: 'hip', at: [80, 122], t: 72, th: -150, sh: -40, ft: -10, hand: [124, 128], eb: 1 },
   ] },
-  fly: { name: 'Chest fly', props: [benchFlat], frames: [
+  fly: { name: 'Chest fly', supine: true, props: [benchFlat], frames: [
     { root: 'hip', at: [76, 144], t: 90, foot: [44, 194], kb: 1, ua: 178, fa: 170 },
     { root: 'hip', at: [76, 144], t: 90, foot: [44, 194], kb: 1, ua: 108, fa: 128 },
   ] },
-  pullover: { name: 'Pullover', props: [benchFlat], frames: [
+  pullover: { name: 'Pullover', supine: true, props: [benchFlat], frames: [
     { root: 'hip', at: [76, 144], t: 90, foot: [44, 194], kb: 1, ua: 175, fa: 175 },
     { root: 'hip', at: [76, 144], t: 90, foot: [44, 194], kb: 1, ua: 68, fa: 75 },
   ] },
@@ -425,7 +295,7 @@ export const PATTERNS = {
   ] },
   pushdown: { name: 'Triceps pushdown', anchor: [146, 16], frames: [stand({ t: 172, ua: 8, fa: 100 }), stand({ t: 172, ua: 6, fa: 4 })] },
   overheadExt: { name: 'Overhead extension', frames: [stand({ ua: 172, fa: -12 }), stand({ ua: 172, fa: -186 })] },
-  skullCrusher: { name: 'Lying triceps extension', props: [benchFlat], frames: [
+  skullCrusher: { name: 'Lying triceps extension', supine: true, props: [benchFlat], frames: [
     { root: 'hip', at: [76, 144], t: 90, foot: [44, 194], kb: 1, ua: 166, fa: 28 },
     { root: 'hip', at: [76, 144], t: 90, foot: [44, 194], kb: 1, ua: 170, fa: 172 },
   ] },
@@ -438,15 +308,15 @@ export const PATTERNS = {
   ] },
 
   // ---- core
-  crunch: { name: 'Crunch', hold: 'none', frames: [
+  crunch: { name: 'Crunch', supine: true, hold: 'none', frames: [
     { root: 'hip', at: [110, 192], t: 90, th: -140, sh: -30, ft: -90, ar: 1, ua: 150, fa: -60 },
     { root: 'hip', at: [110, 192], t: 122, th: -140, sh: -30, ft: -90, ar: 1, ua: 150, fa: -60 },
   ] },
-  situp: { name: 'Sit-up', hold: 'none', frames: [
+  situp: { name: 'Sit-up', supine: true, hold: 'none', frames: [
     { root: 'hip', at: [110, 192], t: 90, th: -140, sh: -30, ft: -90, ar: 1, ua: 150, fa: -60 },
     { root: 'hip', at: [110, 192], t: 172, th: -140, sh: -30, ft: -90, ar: 1, ua: 150, fa: -60 },
   ] },
-  legRaise: { name: 'Leg raise', hold: 'none', frames: [
+  legRaise: { name: 'Leg raise', supine: true, hold: 'none', frames: [
     { root: 'hip', at: [100, 192], t: 90, th: -88, sh: -88, ft: -175, ua: 80, fa: 80 },
     { root: 'hip', at: [100, 192], t: 90, th: -178, sh: -178, ft: 95, ua: 80, fa: 80 },
   ] },

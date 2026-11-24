@@ -3,31 +3,29 @@
 <title>Pattern preview</title>
 <link rel="stylesheet" href="../css/app.css">
 <style>
-  body { background: #fff; color: #111; padding: 8px; font: 11px sans-serif; }
+  body { padding: 8px; font: 11px sans-serif; }
   .grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
-  .cell { border: 1px solid #ddd; border-radius: 6px; padding: 4px; }
-  .cell svg { width: 100%; height: auto; display: block; }
-  .row { display: flex; gap: 2px; }
+  .cell { border: 1px solid var(--line); border-radius: 6px; padding: 4px; }
+  .cell img { width: 100%; display: block; }
 </style>
-<div class="grid" id="g"></div><script>document.documentElement.dataset.theme='light'</script>
+<div class="grid" id="g"></div>
 <script type="module">
-  import { PATTERNS, renderPose } from '../js/anim.js';
+  // Every animation pattern as a 3D thumbnail (its working frame).
+  // ?hold=barbell&cols=4&only=squat,bench&pm=quadriceps&sm=glutes
+  import { PATTERNS } from '../js/anim.js';
+  import { thumbnail } from '../js/body3d.js';
   const q = new URLSearchParams(location.search);
-  const hold = q.get('hold') || 'dumbbell';
-  const only = q.get('only'); if (q.get('cols')) document.getElementById('g').style.gridTemplateColumns = `repeat(${q.get('cols')}, 1fr)`;
   const g = document.getElementById('g');
-  for (const [id, p] of Object.entries(PATTERNS)) {
-    if (only && !only.split(',').includes(id)) continue;
+  if (q.get('cols')) g.style.gridTemplateColumns = `repeat(${q.get('cols')}, 1fr)`;
+  const eq = { barbell: 'barbell', dumbbell: 'dumbbell', cable: 'cable' }[q.get('hold')] || 'barbell';
+  const only = q.get('only')?.split(',');
+  const jobs = [];
+  for (const id of Object.keys(PATTERNS)) {
+    if (only && !only.includes(id)) continue;
     const c = document.createElement('div'); c.className = 'cell';
-    c.innerHTML = `<b>${id}</b>`;
-    const r = document.createElement('div'); r.className = 'row';
-    for (const f of p.frames) {
-      const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-      s.setAttribute('viewBox', '0 0 240 210'); s.classList.add('fig');
-      renderPose(s, p, f, p.hold === 'none' ? 'none' : hold);
-      r.appendChild(s);
-    }
-    c.appendChild(r); g.appendChild(c);
+    c.innerHTML = `<b>${id}</b><img>`;
+    g.appendChild(c);
+    jobs.push(thumbnail({ anim: id, eq, pm: (q.get('pm') || 'quadriceps').split(','), sm: (q.get('sm') || '').split(',').filter(Boolean) }).then((u) => { c.querySelector('img').src = u; }));
   }
-  document.body.dataset.done = '1';
+  Promise.all(jobs).then(() => { document.body.dataset.done = '1'; });
 </script>

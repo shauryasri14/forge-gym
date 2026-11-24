@@ -1,5 +1,6 @@
 import * as S from './store.js';
-import { Player, snapshot, holdFor, PATTERNS } from './anim.js';
+import { PATTERNS } from './anim.js';
+import { Viewer, thumbnail, webglOK } from './body3d.js';
 import { renderConsistency, streaks } from './consistency.js';
 
 // ------------------------------------------------------------------ data
@@ -23,32 +24,47 @@ const fmtDay = (k) => { const d = S.parseDay(k); return `${['Sun', 'Mon', 'Tue',
 const fmtDur = (ms) => { const m = Math.round(ms / 60000); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`; };
 const clock = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 const ytUrl = (e) => S.get().links[e.id] || `https://www.youtube.com/results?search_query=${encodeURIComponent(e.name + ' exercise proper form')}`;
-const figSvg = (cls = '') => `<svg class="fig ${cls}" viewBox="0 0 240 210" aria-hidden="true"></svg>`;
-const thumb = (e) => `<svg class="fig thumb" viewBox="0 0 240 210" data-anim="${e.anim}" data-hold="${holdFor(e.eq)}" aria-hidden="true"></svg>`;
-
 let cleanups = [];
 const onLeave = (f) => cleanups.push(f);
 
-// Lazily draw list thumbnails when they scroll into view.
+const GL = webglOK();
+const thumb = (e) => `<img class="thumb" alt="" data-id="${esc(e.id)}" decoding="async">`;
+
+// Render list thumbnails (posed 3D body with the muscles lit) when they scroll into view.
 const thumbObs = new IntersectionObserver((ents) => {
-  for (const en of ents) if (en.isIntersecting) { snapshot(en.target, en.target.dataset.anim, en.target.dataset.hold); cropFig(en.target); thumbObs.unobserve(en.target); }
-}, { rootMargin: '200px' });
-// Zoom a thumbnail onto the figure and its equipment (everything except the ground line).
-function cropFig(svg) {
-  try {
-    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-    for (const n of svg.querySelectorAll('g > *:not(.ground)')) {
-      const b = n.getBBox();
-      x0 = Math.min(x0, b.x); y0 = Math.min(y0, b.y); x1 = Math.max(x1, b.x + b.width); y1 = Math.max(y1, b.y + b.height);
-    }
-    if (!isFinite(x0)) return;
-    const pad = 10, w = x1 - x0 + pad * 2, h = y1 - y0 + pad * 2;
-    const s = Math.max(w, h * 240 / 210); // keep the 240:210 box so figures share one scale per thumb
-    const sh = s * 210 / 240, cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
-    svg.setAttribute('viewBox', `${(cx - s / 2).toFixed(1)} ${(cy - sh / 2).toFixed(1)} ${s.toFixed(1)} ${sh.toFixed(1)}`);
-  } catch { /* not rendered yet */ }
+  for (const en of ents) {
+    if (!en.isIntersecting) continue;
+    const img = en.target; thumbObs.unobserve(img);
+    const e = byId.get(img.dataset.id);
+    if (e && GL) thumbnail(e).then((u) => { img.src = u; });
+  }
+}, { rootMargin: '300px' });
+const drawThumbs = (root) => $$('img.thumb[data-id]:not([src])', root).forEach((i) => thumbObs.observe(i));
+
+const VIEWS = [['3/4', null], ['Front', 0], ['Side', 90], ['Back', 180]];
+const legend = (pm = [], sm = []) => `<div class="legend">
+  <span><i class="dot p"></i><b>Primary</b> ${esc(cap(pm.join(', ')) || '—')}</span>
+  ${sm.length ? `<span><i class="dot s"></i><b>Secondary</b> ${esc(cap(sm.join(', ')))}</span>` : ''}</div>`;
+
+// The 3D stage: canvas + view buttons. Returns the Viewer (or null without WebGL).
+function mountStage(host, e) {
+  if (!GL) { host.innerHTML = '<p class="muted small gl-off">Your browser has WebGL turned off, so the 3D muscle view can’t be shown.</p>'; return null; }
+  host.insertAdjacentHTML('beforeend', `<div class="views">${VIEWS.map(([l], i) => `<button data-i="${i}" class="${i ? '' : 'on'}">${l}</button>`).join('')}</div>
+    <p class="hint">Drag to rotate · pinch to zoom</p>`);
+  const v = new Viewer(host);
+  v.load(e);
+  const def = v.yaw;
+  const btns = $$('.views button', host);
+  $('.views', host).onclick = (ev) => {
+    const b = ev.target.closest('button'); if (!b) return;
+    const yaw = VIEWS[+b.dataset.i][1];
+    v.zoom = 1; v.setView(yaw ?? def);
+    btns.forEach((x) => x.classList.toggle('on', x === b));
+  };
+  v.onOrbit = () => btns.forEach((x) => x.classList.remove('on'));
+  onLeave(() => v.destroy());
+  return v;
 }
-const drawThumbs = (root) => $$('svg.thumb[data-anim]', root).forEach((s) => thumbObs.observe(s));
 
 function toast(msg, action) {
   const t = $('#toast');
@@ -254,13 +270,12 @@ function viewExercise(main, id) {
   const st = S.get();
   const fav = st.favorites.includes(e.id);
   const hist = S.historyFor(e.id);
-  const pat = PATTERNS[e.anim] || PATTERNS.generic;
   const chips = [e.lvl, e.eq, e.mech, e.force, e.cat].filter(Boolean).map((c) => `<span class="chip">${esc(cap(c))}</span>`).join('');
   main.innerHTML = `
-    <div class="hero">${figSvg('big')}
+    <div class="hero"><div class="stage" id="stage"></div>
       <div class="hero-ctl"><button class="round" id="pp" aria-label="Pause">❚❚</button>
-        <div class="seg" id="spd">${[0.5, 1, 1.5].map((v) => `<button data-v="${v}" class="${v === 1 ? 'on' : ''}">${v}×</button>`).join('')}</div>
-        <span class="muted small">${esc(pat.name)} animation</span></div></div>
+        <div class="seg" id="spd">${[0.5, 1, 1.5].map((v) => `<button data-v="${v}" class="${v === 1 ? 'on' : ''}">${v}×</button>`).join('')}</div></div>
+      ${legend(e.pm, e.sm)}</div>
     <div class="ex-head"><h1>${esc(e.name)}</h1><button class="star-btn ${fav ? 'on' : ''}" id="fav" aria-label="Favourite">★</button></div>
     <div class="chips">${chips}${e.custom ? '<span class="chip acc">Custom</span>' : ''}</div>
     <div class="row gap">
@@ -269,21 +284,19 @@ function viewExercise(main, id) {
     </div>
     <details class="mini"><summary>${st.links[e.id] ? 'Using your saved video link' : 'Opens a YouTube search · save a specific video'}</summary>
       <form class="row gap" id="lk"><input class="inp" name="u" type="url" placeholder="Paste a YouTube link" value="${esc(st.links[e.id] || '')}"><button class="btn sm">Save</button></form></details>
-    <section class="card"><h3>Muscles</h3>
-      <p><span class="muted">Primary</span> ${e.pm.map((m) => `<span class="chip acc">${esc(cap(m))}</span>`).join(' ') || '—'}</p>
-      ${(e.sm || []).length ? `<p><span class="muted">Secondary</span> ${e.sm.map((m) => `<span class="chip">${esc(cap(m))}</span>`).join(' ')}</p>` : ''}</section>
     ${(e.ins || []).length ? `<section class="card"><h3>How to do it</h3><ol class="steps">${e.ins.map((s) => `<li>${esc(s)}</li>`).join('')}</ol></section>` : ''}
     <section class="card" id="hist"></section>
     ${e.custom ? `<div class="row gap"><a class="btn ghost" href="#/custom/${encodeURIComponent(e.id)}">Edit</a><button class="btn ghost danger-t" id="del">Delete exercise</button></div>` : ''}`;
 
-  const player = new Player($('.hero svg', main), e.anim, holdFor(e.eq));
+  const player = mountStage($('#stage'), e);
   const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
   const pp = $('#pp');
   const setPP = (on) => { pp.textContent = on ? '❚❚' : '▶'; pp.setAttribute('aria-label', on ? 'Pause' : 'Play'); };
-  if (!reduce) player.play(); setPP(!reduce);
-  pp.onclick = () => setPP(player.toggle());
-  $('#spd').onclick = (ev) => { const b = ev.target.closest('button'); if (!b) return; player.speed = +b.dataset.v; $$('#spd button').forEach((x) => x.classList.toggle('on', x === b)); };
-  onLeave(() => player.destroy());
+  if (player && !reduce) player.play(); setPP(!!player && !reduce);
+  if (player) {
+    pp.onclick = () => setPP(player.toggle());
+    $('#spd').onclick = (ev) => { const b = ev.target.closest('button'); if (!b) return; player.speed = +b.dataset.v; $$('#spd button').forEach((x) => x.classList.toggle('on', x === b)); };
+  } else $('.hero-ctl').hidden = true;
 
   $('#fav').onclick = (ev) => {
     S.update((x) => { const i = x.favorites.indexOf(e.id); i < 0 ? x.favorites.push(e.id) : x.favorites.splice(i, 1); });
@@ -597,7 +610,7 @@ function viewCustom(main, id) {
   const e = editing || { name: '', pm: ['chest'], eq: 'barbell', cat: 'strength', anim: 'bench', ins: [] };
   const animOpts = Object.entries(PATTERNS).map(([k, p]) => `<option value="${k}" ${k === e.anim ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
   main.innerHTML = `<form class="stack" id="cf">
-    <div class="hero sm">${figSvg('big')}</div>
+    <div class="hero sm"><div class="stage" id="stage"></div><div id="lg">${legend(e.pm, [])}</div></div>
     <label class="lbl">Name<input class="inp" name="name" required maxlength="60" value="${esc(e.name)}" placeholder="e.g. Landmine press"></label>
     <div class="grid2">
       <label class="lbl">Main muscle<select class="inp" name="pm">${MUSCLES.map((m) => `<option ${m === e.pm[0] ? 'selected' : ''} value="${m}">${cap(m)}</option>`).join('')}</select></label>
@@ -608,10 +621,13 @@ function viewCustom(main, id) {
     <label class="lbl">Steps <span class="muted small">(one per line, optional)</span><textarea class="inp" name="ins" rows="4">${esc(e.ins.join('\n'))}</textarea></label>
     <button class="btn primary wide">${editing ? 'Save changes' : 'Create exercise'}</button></form>`;
   const f = $('#cf');
-  const player = new Player($('.hero svg', main), e.anim, holdFor(e.eq));
-  player.play(); onLeave(() => player.destroy());
-  const sync = () => { player.hold = holdFor(f.eq.value); player.set(f.anim.value); };
-  f.anim.onchange = sync; f.eq.onchange = sync;
+  const player = mountStage($('#stage'), e);
+  player?.play();
+  const sync = () => {
+    player?.load({ anim: f.anim.value, eq: f.eq.value, pm: [f.pm.value] }, { keepView: true });
+    $('#lg').innerHTML = legend([f.pm.value], []);
+  };
+  f.anim.onchange = sync; f.eq.onchange = sync; f.pm.onchange = sync;
   f.onsubmit = (ev) => {
     ev.preventDefault();
     const row = { id: editing?.id || 'c_' + S.uid(), name: f.name.value.trim(), pm: [f.pm.value], sm: [], eq: f.eq.value, cat: f.cat.value,

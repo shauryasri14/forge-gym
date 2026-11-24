@@ -168,12 +168,9 @@ i.pad { width: 11px; height: 11px; }
 .tick { width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--line); display: grid; place-items: center; color: transparent; font-size: 14px; flex: none; }
 .ex-item.picked { border-color: var(--acc); }
 .ex-item.picked .tick { background: var(--acc); border-color: var(--acc); color: #fff; }
-svg.thumb { width: 58px; height: 51px; flex: none; border-radius: 9px; background: var(--surface-2); }
 
 /* ---------- exercise detail ---------- */
 .hero { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 8px 8px 10px; }
-.hero svg.big { width: 100%; height: auto; max-height: 46vh; display: block; }
-.hero.sm svg.big { max-height: 30vh; }
 .hero-ctl { display: flex; align-items: center; gap: 10px; padding: 0 6px; }
 .round { width: 40px; height: 40px; border-radius: 50%; background: var(--acc); color: #fff; font-size: 13px; flex: none; }
 .hero-ctl .muted { margin-left: auto; }
@@ -202,7 +199,6 @@ details.mini form { margin-top: 8px; }
 .wo-ex-h { display: flex; align-items: center; gap: 6px; }
 .wo-ex-t { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
 .wo-ex-t span { display: flex; flex-direction: column; min-width: 0; }
-.wo-ex-t svg.thumb { width: 46px; height: 40px; }
 .sets { display: flex; flex-direction: column; gap: 4px; }
 .set { display: grid; grid-template-columns: 30px 1fr 68px 58px 40px; gap: 6px; align-items: center; padding: 3px 4px; border-radius: 10px; }
 .set.hdr { font-size: 11.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
@@ -252,21 +248,21 @@ details.mini form { margin-top: 8px; }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 
-/* ---------- figure ---------- */
-svg.fig .ground { stroke: var(--eq-fill); stroke-width: 2; }
-svg.fig .limb, svg.fig .torso { fill: none; stroke: var(--fig); stroke-linecap: round; stroke-linejoin: round; stroke-width: 7; }
-svg.fig .torso { stroke-width: 10; }
-svg.fig .limb.far { stroke: var(--fig-far); }
-svg.fig .head { fill: var(--fig); }
-svg.fig .eq { fill: none; stroke: var(--eq); stroke-linecap: round; stroke-width: 2.5; }
-svg.fig .eq.thin { stroke-width: 2; stroke: var(--eq-fill); }
-svg.fig .eq.rod { stroke-width: 4; }
-svg.fig .eq.pad { stroke-width: 8; stroke: var(--eq); }
-svg.fig .eq.box { fill: var(--eq-fill); stroke: var(--eq); }
-svg.fig .eq.plate { fill: var(--acc); fill-opacity: .9; stroke: none; }
-svg.fig .eq.hub { fill: var(--eq); stroke: none; }
-svg.fig .eq.db { fill: var(--acc); stroke: none; }
-svg.fig .eq.far { opacity: .45; }
-svg.fig .eq.cable { stroke: var(--eq); stroke-width: 1.5; }
-svg.fig .eq.band { stroke: var(--acc); stroke-width: 2; stroke-dasharray: 4 3; }
-svg.thumb .ground { display: none; }
+/* ---------- 3D muscle stage ---------- */
+.stage { position: relative; border-radius: 14px; overflow: hidden;
+  background: radial-gradient(120% 90% at 50% 30%, var(--surface-2), var(--surface) 70%); }
+canvas.gl { display: block; width: 100%; aspect-ratio: 1 / .95; max-height: 54vh; touch-action: none; cursor: grab; }
+canvas.gl:active { cursor: grabbing; }
+.hero.sm canvas.gl { max-height: 36vh; }
+.views { position: absolute; top: 8px; left: 8px; right: 8px; display: flex; gap: 4px; justify-content: center; }
+.views button { padding: 5px 11px; border-radius: 99px; font-size: 12.5px; font-weight: 600; color: var(--muted);
+  background: color-mix(in srgb, var(--surface) 80%, transparent); border: 1px solid var(--line); backdrop-filter: blur(6px); }
+.views button.on { color: var(--acc); border-color: var(--acc); }
+.hint { position: absolute; bottom: 6px; left: 0; right: 0; text-align: center; margin: 0; font-size: 11.5px; color: var(--muted); pointer-events: none; }
+.gl-off { padding: 40px 16px; text-align: center; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 8px 6px 0; font-size: 13px; }
+.legend b { font-weight: 600; margin-right: 2px; }
+.dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
+.dot.p { background: #ff2b2b; box-shadow: 0 0 8px #ff2b2b; } .dot.s { background: #ff9c33; }
+img.thumb { width: 58px; height: 51px; flex: none; border-radius: 9px; background: var(--surface-2); object-fit: cover; }
+.wo-ex-t img.thumb { width: 46px; height: 40px; }

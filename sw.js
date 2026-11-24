@@ -1,7 +1,7 @@
 // Offline cache for the whole app. Bump VERSION whenever any file changes so phones pick it up.
-const VERSION = 'forge-v1';
+const VERSION = 'forge-v3';
 const FILES = [
-  './', 'index.html', 'css/app.css', 'js/app.js', 'js/store.js', 'js/anim.js', 'js/consistency.js',
+  './', 'index.html', 'css/app.css', 'js/app.js', 'js/store.js', 'js/anim.js', 'js/consistency.js', 'js/body3d.js', 'vendor/three.module.min.js',
   'data/exercises.json', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/maskable-512.png',
 ];
 
