@@ -176,10 +176,6 @@ i.pad { width: 11px; height: 11px; }
 .hero-ctl .muted { margin-left: auto; }
 .ex-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
 .star-btn { font-size: 26px; color: var(--line); line-height: 1; padding: 4px; } .star-btn.on { color: #ffb020; }
-.vposter, .vframe { position: relative; display: block; width: min(100%, 340px); aspect-ratio: 9 / 16; max-height: 72vh; margin: 0 auto; border-radius: 14px; overflow: hidden; background: #000; }
-.vposter img { width: 100%; height: 100%; object-fit: cover; opacity: .9; }
-.vplay { position: absolute; inset: 0; margin: auto; width: 64px; height: 64px; border-radius: 50%; background: rgba(255, 0, 51, .92); color: #fff; display: grid; place-items: center; font-size: 24px; padding-left: 4px; }
-.vframe iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
 details.mini summary { font-size: 13px; color: var(--muted); cursor: pointer; }
 details.mini form { margin-top: 8px; }
 .steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; }
@@ -253,20 +249,21 @@ details.mini form { margin-top: 8px; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 
 /* ---------- 3D muscle stage ---------- */
-.stage { position: relative; border-radius: 14px; overflow: hidden;
-  background: radial-gradient(120% 90% at 50% 30%, var(--surface-2), var(--surface) 70%); }
+.stage { position: relative; border-radius: 14px; overflow: hidden; background: radial-gradient(110% 85% at 50% 35%, #2c3038, #101215 72%); }
 canvas.gl { display: block; width: 100%; aspect-ratio: 1 / .95; max-height: 54vh; touch-action: none; cursor: grab; }
 canvas.gl:active { cursor: grabbing; }
 .hero.sm canvas.gl { max-height: 36vh; }
 .views { position: absolute; top: 8px; left: 8px; right: 8px; display: flex; gap: 4px; justify-content: center; }
-.views button { padding: 5px 11px; border-radius: 99px; font-size: 12.5px; font-weight: 600; color: var(--muted);
-  background: color-mix(in srgb, var(--surface) 80%, transparent); border: 1px solid var(--line); backdrop-filter: blur(6px); }
-.views button.on { color: var(--acc); border-color: var(--acc); }
-.hint { position: absolute; bottom: 6px; left: 0; right: 0; text-align: center; margin: 0; font-size: 11.5px; color: var(--muted); pointer-events: none; }
+.views button { padding: 5px 10px; border-radius: 99px; font-size: 12.5px; font-weight: 600; color: #b4bcc8;
+  background: rgba(16, 18, 21, .6); border: 1px solid rgba(255, 255, 255, .14); backdrop-filter: blur(6px); }
+.views button.on { color: #fff; border-color: var(--acc); background: rgba(255, 107, 44, .25); }
+.views .fx { margin-left: 6px; }
+.views .fx.on { border-color: #d4161f; background: rgba(212, 22, 31, .35); }
+.hint { position: absolute; bottom: 6px; left: 0; right: 0; text-align: center; margin: 0; font-size: 11.5px; color: #8790a0; pointer-events: none; }
 .gl-off { padding: 40px 16px; text-align: center; }
 .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 8px 6px 0; font-size: 13px; }
 .legend b { font-weight: 600; margin-right: 2px; }
 .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
-.dot.p { background: #ff2b2b; box-shadow: 0 0 8px #ff2b2b; } .dot.s { background: #ff9c33; }
-img.thumb { width: 58px; height: 51px; flex: none; border-radius: 9px; background: var(--surface-2); object-fit: cover; }
+.dot.p { background: #d4161f; box-shadow: 0 0 8px #d4161f; } .dot.s { background: #f0763c; }
+img.thumb { width: 58px; height: 51px; flex: none; border-radius: 9px; background: #16181c; object-fit: cover; }
 .wo-ex-t img.thumb { width: 46px; height: 40px; }

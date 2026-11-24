@@ -18,9 +18,9 @@ const AX = V(1, 0, 0), AY = V(0, 1, 0), AZ = V(0, 0, 1);
 const NOMINAL = { torso: 50, neck: 16, ua: 27, fa: 25, th: 38, sh: 36, ft: 11 };
 
 const COL = {
-  base: new THREE.Color('#5c6370'), idle: new THREE.Color('#b9a6aa'),
-  primary: new THREE.Color('#ff2b2b'), secondary: new THREE.Color('#ff9c33'),
-  equip: new THREE.Color('#2d3139'), plate: new THREE.Color('#ff6b2c'), metal: new THREE.Color('#9aa3ad'),
+  base: new THREE.Color('#6f6b68'), idle: new THREE.Color('#d8d1cb'),
+  primary: new THREE.Color('#d4161f'), secondary: new THREE.Color('#f0763c'),
+  equip: new THREE.Color('#262a30'), plate: new THREE.Color('#30353d'), metal: new THREE.Color('#b9c1c9'), band: new THREE.Color('#3f7be0'),
 };
 
 // ------------------------------------------------------------------ 2D solve -> 3D joints
@@ -68,12 +68,45 @@ function placeBetween(mesh, A, B) { // unit-height Y-aligned mesh stretched from
 // ------------------------------------------------------------------ the body
 const SPH = new THREE.SphereGeometry(1, 28, 18);
 
+// Spindle (fusiform) muscle shape: thick belly, tapering to tendon ends. Its long axis is local Y,
+// and the lathe UVs run along it, so the fibre texture's vertical stripes follow the fibres.
+const SPINDLE = (() => {
+  const pts = [];
+  for (let i = 0; i <= 24; i++) { const t = i / 24; pts.push(new THREE.Vector2(Math.max(0.05, Math.sin(Math.PI * t)) ** 0.62, -1 + 2 * t)); }
+  return new THREE.LatheGeometry(pts, 30);
+})();
+
+// Procedural muscle-fibre texture (grey, so material colour tints it), also used as a bump map.
+function fibreTexture() {
+  const c = document.createElement('canvas'); c.width = 256; c.height = 256;
+  const g = c.getContext('2d');
+  g.fillStyle = '#ececec'; g.fillRect(0, 0, 256, 256);
+  for (let x = 0; x < 256; x += 1.6) {
+    const l = 170 + Math.random() * 85, w = 0.6 + Math.random() * 1.4, ph = Math.random() * 6.28;
+    g.strokeStyle = `rgb(${l},${l},${l})`; g.lineWidth = w;
+    g.beginPath();
+    for (let y = 0; y <= 256; y += 16) g.lineTo(x + Math.sin(y / 40 + ph) * 1.2, y);
+    g.stroke();
+  }
+  for (let i = 0; i < 7; i++) { // a few fascicle separations
+    const x = Math.random() * 256; g.strokeStyle = 'rgba(90,90,90,.45)'; g.lineWidth = 1.2;
+    g.beginPath(); g.moveTo(x, 0); g.lineTo(x + (Math.random() - 0.5) * 8, 256); g.stroke();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(2, 1); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  return t;
+}
+let FIBRE = null;
+
 class Body {
   constructor() {
     this.root = new THREE.Group();
-    this.mats = {};
-    this.baseMat = new THREE.MeshStandardMaterial({ color: COL.base, roughness: 0.75, metalness: 0.05 });
-    for (const g of MUSCLE_GROUPS) this.mats[g] = new THREE.MeshStandardMaterial({ color: COL.idle.clone(), roughness: 0.5, metalness: 0.02, emissive: new THREE.Color(0) });
+    FIBRE ||= fibreTexture();
+    this.baseMat = new THREE.MeshStandardMaterial({ color: COL.base, roughness: 0.8, metalness: 0.02 });
+    const muscleMat = () => new THREE.MeshPhysicalMaterial({ color: COL.idle.clone(), map: FIBRE, bumpMap: FIBRE, bumpScale: 1.2,
+      roughness: 0.55, clearcoat: 0.3, clearcoatRoughness: 0.55, emissive: new THREE.Color(0) });
+    this.mats = {}; this.meshes = {};
+    for (const g of [...MUSCLE_GROUPS, 'other']) { this.mats[g] = muscleMat(); this.meshes[g] = []; }
     const seg = () => { const g = new THREE.Group(); g.matrixAutoUpdate = false; this.root.add(g); return g; };
     this.torso = seg(); this.neck = seg();
     this.limbs = [1, -1].map((s) => ({ s, ua: seg(), fa: seg(), th: seg(), sh: seg(), ft: seg() }));
@@ -81,68 +114,89 @@ class Body {
     this.level = {};
   }
 
-  blob(parent, mat, pos, r, rot = [0, 0, 0]) {
-    const m = new THREE.Mesh(SPH, mat);
-    m.position.set(...pos); m.scale.set(...r); m.rotation.set(...rot);
-    m.castShadow = true;
-    parent.add(m);
-    return m;
+  blob(parent, pos, r) { // base body (bone / non-muscle) ellipsoid
+    const m = new THREE.Mesh(SPH, this.baseMat);
+    m.position.set(...pos); m.scale.set(...r); m.castShadow = true;
+    parent.add(m); return m;
   }
   cap(parent, r, len, y0 = 0, r2) {
     const geo = r2 ? new THREE.CylinderGeometry(r2, r, len, 18) : new THREE.CapsuleGeometry(r, Math.max(0.1, len - 2 * r), 6, 18);
     const m = new THREE.Mesh(geo, this.baseMat);
     m.position.y = y0 + len / 2; m.castShadow = true;
-    parent.add(m);
+    parent.add(m); return m;
+  }
+  // A muscle: spindle centred at pos, half-length hl along its fibres, half-widths w (local x) and
+  // d (local z), rotated by rz (around the segment's front axis) and rx.
+  mus(parent, group, pos, hl, w, d, rz = 0, rx = 0) {
+    const m = new THREE.Mesh(SPINDLE, this.mats[group]);
+    m.position.set(...pos); m.scale.set(w, hl, d); m.rotation.set(rx, 0, rz);
+    m.castShadow = true; m.userData.s0 = m.scale.clone();
+    parent.add(m); this.meshes[group].push(m);
     return m;
   }
 
   build() {
-    const M = this.mats, B = this.baseMat, T = this.torso;
-    // torso base (local x is lateral, y up from the hip centre, z = front)
-    this.blob(T, B, [0, 4, 0], [12.5, 8.5, 8.5]);
-    this.blob(T, B, [0, 19, 0], [11, 13, 8]);
-    this.blob(T, B, [0, 36, 0], [14.5, 16, 9.6]);
-    this.blob(T, B, [0, 47, 0], [16, 4.5, 7]);
+    const T = this.torso, mus = this.mus.bind(this);
+    // torso base (local x lateral, y up from the hip centre, z front)
+    this.blob(T, [0, 4, 0], [12, 8.5, 8.2]);
+    this.blob(T, [0, 19, -0.5], [10.5, 13, 7.2]);
+    this.blob(T, [0, 36, -0.4], [13.8, 15.5, 9]);
+    this.blob(T, [0, 47, -1], [15.5, 4.2, 6.5]);
     for (const x of [-1, 1]) {
-      this.blob(T, M.chest, [6.6 * x, 40.5, 7.2], [7.4, 6, 3.4], [0, 0, -0.28 * x]);
-      for (const [i, y] of [12.5, 18, 23.5, 29].entries()) this.blob(T, M.abdominals, [3.2 * x, y, 7.6 + (i === 3 ? 0.9 : 0)], [2.9, 2.6, 1.6]);
-      this.blob(T, M.abdominals, [10 * x, 20, 3.5], [3, 9, 4.6]);           // obliques
-      this.blob(T, M.traps, [6.5 * x, 48.6, -2.2], [7.5, 3.3, 4.2], [0, 0, 0.35 * x]);
-      this.blob(T, M.traps, [2.4 * x, 43, -8.4], [3, 6.5, 2]);
-      this.blob(T, M['middle back'], [5.8 * x, 37.5, -8.6], [4.2, 6.2, 2.2], [0, 0, -0.2 * x]);
-      this.blob(T, M.lats, [10.4 * x, 30, -5.6], [4.6, 11.5, 4.2], [0, 0, 0.22 * x]);
-      this.blob(T, M['lower back'], [3.4 * x, 16, -7.3], [2.6, 9.5, 2.4]);
-      this.blob(T, M.glutes, [6.2 * x, 3, -6.2], [6.6, 7.2, 5.6]);
+      mus(T, 'chest', [7.2 * x, 43, 7.4], 8.6, 3.3, 2.6, -x * 1.37);              // pec major, clavicular
+      mus(T, 'chest', [6.6 * x, 38.6, 7.6], 9, 4.4, 3.1, -x * 1.05);              // pec major, sternal
+      for (const y of [12, 17.8, 23.6]) mus(T, 'abdominals', [3.2 * x, y, 7.3], 2.9, 2.9, 1.7);
+      mus(T, 'abdominals', [3.1 * x, 29.2, 8.1], 2.7, 2.8, 1.6);
+      mus(T, 'abdominals', [10.2 * x, 20, 3.9], 9.6, 3.4, 4, x * 0.35);           // external oblique
+      for (const y of [29, 33, 37]) mus(T, 'other', [12.2 * x, y, 4.2], 3.2, 1.6, 1.8, x * 1.1); // serratus
+      mus(T, 'traps', [6.6 * x, 48.6, -2.6], 8, 3.2, 3.4, -x * 1.95);            // upper trapezius
+      mus(T, 'traps', [3.2 * x, 43.5, -8.5], 6.5, 3, 1.8, x * 0.55);             // middle/lower trapezius
+      mus(T, 'middle back', [5.8 * x, 37, -8.6], 5.6, 3.3, 2, -x * 1.0);         // rhomboids
+      mus(T, 'middle back', [9.2 * x, 40.5, -7], 4, 2.6, 2.2, x * 1.3);          // infraspinatus / teres
+      mus(T, 'lats', [10.6 * x, 31, -5.6], 12.5, 4.8, 3.4, x * 0.3);
+      mus(T, 'lats', [6.8 * x, 23.5, -7.4], 8, 3.8, 2.3, x * 0.65);
+      mus(T, 'lower back', [3.4 * x, 18, -7.4], 11, 2.6, 2.5);                    // erector spinae
+      mus(T, 'glutes', [6.4 * x, 2.6, -6.4], 7.6, 6.6, 5.6, x * 0.4);            // gluteus maximus
+      mus(T, 'abductors', [10.4 * x, 6.5, -2], 5.2, 3.2, 3.8, x * 0.25);         // gluteus medius
     }
-    // neck + head (local y runs from the shoulder centre up to the head centre, 16 units)
+    mus(T, 'traps', [0, 41.5, -8.9], 8.5, 3, 1.6);
+    // neck + head (local y: shoulder centre -> head centre, 16 units)
     const N = this.neck;
-    this.cap(N, 4.2, 9, 0);
-    for (const x of [-1, 1]) this.blob(N, M.neck, [2.3 * x, 4, 2.2], [1.6, 5, 1.6], [0.35, 0, 0.3 * x]);
-    this.blob(N, B, [0, 16, 0], [7.6, 9.2, 8.4]);
-    this.blob(N, B, [0, 11, 3.6], [5.4, 4, 4.6]);
-    // limbs; x offsets are "outward" so they flip with the side
+    this.cap(N, 4, 9, 0);
+    for (const x of [-1, 1]) mus(N, 'neck', [2.4 * x, 4.2, 2.3], 5.6, 1.5, 1.5, 0.3 * x, 0.35); // SCM
+    this.blob(N, [0, 16, 0], [7.4, 9, 8.2]);
+    this.blob(N, [0, 11, 3.6], [5.2, 4, 4.4]);
+    // limbs; x offsets are "outward" (o) so they mirror per side
     for (const L of this.limbs) {
       const o = L.s;
-      this.cap(L.ua, 3.4, 27);
-      this.blob(L.ua, M.shoulders, [1.6 * o, 2.5, 0], [5.6, 7.2, 5.8]);
-      this.blob(L.ua, M.biceps, [0, 14, 2.5], [3.3, 8.6, 3.2]);
-      this.blob(L.ua, M.triceps, [0.4 * o, 12, -2.7], [3.6, 10, 3.4]);
-      this.blob(L.fa, B, [0, 0, 0], [3, 3, 3]);                             // elbow
-      this.cap(L.fa, 2.2, 25, 0, 3.1);
-      this.blob(L.fa, M.forearms, [0.4 * o, 7.5, 0.9], [3.3, 8, 3]);
-      this.blob(L.fa, M.forearms, [-0.6 * o, 8.5, -0.9], [2.7, 8, 2.6]);
-      this.blob(L.fa, B, [0, 27.5, 0], [2, 3.8, 3]);                        // hand
-      this.cap(L.th, 5.2, 38);
-      this.blob(L.th, M.quadriceps, [0.8 * o, 20, 3.6], [5.2, 14, 4.3]);
-      this.blob(L.th, M.quadriceps, [-2.4 * o, 31.5, 2.8], [3.1, 5, 3]);
-      this.blob(L.th, M.hamstrings, [0.2 * o, 19, -3.4], [4.6, 15, 4]);
-      this.blob(L.th, M.adductors, [-3.7 * o, 11, 0.4], [3, 10, 4]);
-      this.blob(L.th, M.abductors, [5.4 * o, 3, -0.5], [3, 6.5, 4.6]);
-      this.blob(L.sh, B, [0, 0, 0.6], [4.2, 4, 4]);                         // knee
-      this.cap(L.sh, 2.6, 36, 0, 3.8);
-      this.blob(L.sh, M.calves, [0, 9, -2.9], [3.9, 9, 3.6]);
-      this.blob(L.sh, M.calves, [0, 17, -2], [3, 7, 2.8]);
-      this.blob(L.ft, B, [0, 4.5, -0.6], [3.2, 7.5, 2.4]);
+      this.cap(L.ua, 2.8, 27);
+      mus(L.ua, 'shoulders', [1.4 * o, 4.2, 3], 7.2, 3.2, 3);                    // anterior deltoid
+      mus(L.ua, 'shoulders', [3.6 * o, 4.6, 0], 7.6, 3.2, 3.4);                  // lateral deltoid
+      mus(L.ua, 'shoulders', [1.4 * o, 4.2, -3], 7, 3, 3);                       // posterior deltoid
+      mus(L.ua, 'biceps', [0, 14.5, 2.7], 9.6, 3.2, 3.2);
+      mus(L.ua, 'triceps', [-0.8 * o, 13, -2.8], 10.6, 2.9, 3);                  // long head
+      mus(L.ua, 'triceps', [1.7 * o, 11.5, -2], 8, 2.7, 2.7);                    // lateral head
+      this.blob(L.fa, [0, 0, 0], [2.8, 2.8, 2.8]);                               // elbow
+      this.cap(L.fa, 1.9, 25, 0, 2.6);
+      mus(L.fa, 'forearms', [1.3 * o, 6, 1.4], 7.6, 2.6, 2.6);                   // brachioradialis
+      mus(L.fa, 'forearms', [-0.7 * o, 9, 1], 8.4, 2.6, 2.4);                    // flexors
+      mus(L.fa, 'forearms', [0.4 * o, 9, -1.3], 8.4, 2.4, 2.2);                  // extensors
+      this.blob(L.fa, [0, 27.5, 0], [1.9, 3.8, 2.9]);                            // hand
+      this.cap(L.th, 4.4, 38);
+      mus(L.th, 'quadriceps', [0.3 * o, 19, 4.1], 14, 3.4, 3.2);                 // rectus femoris
+      mus(L.th, 'quadriceps', [3 * o, 19.5, 1.6], 15, 3.6, 3.8);                 // vastus lateralis
+      mus(L.th, 'quadriceps', [-2.5 * o, 29, 2.5], 7.2, 3.2, 3.2);               // vastus medialis
+      mus(L.th, 'hamstrings', [1.6 * o, 19, -3.3], 15, 3, 3.2);                  // biceps femoris
+      mus(L.th, 'hamstrings', [-1.4 * o, 19.5, -3.3], 15, 3, 3.2);               // semitendinosus
+      mus(L.th, 'adductors', [-3.8 * o, 11, 0.4], 11, 3, 4, -o * 0.12);
+      mus(L.th, 'abductors', [5 * o, 4, 1.6], 5.6, 2.3, 2.6);                    // TFL
+      this.blob(L.sh, [0, 0, 0.6], [3.9, 3.8, 3.8]);                             // knee
+      this.cap(L.sh, 2.2, 36, 0, 3.2);
+      mus(L.sh, 'calves', [-1.4 * o, 9.5, -2.9], 9, 2.8, 3.2);                   // gastrocnemius, medial
+      mus(L.sh, 'calves', [1.4 * o, 9.5, -2.7], 8.5, 2.6, 3);                    // gastrocnemius, lateral
+      mus(L.sh, 'calves', [0, 18, -2.1], 9, 3.2, 2.4);                           // soleus
+      mus(L.sh, 'other', [0.9 * o, 15, 2.2], 11, 1.9, 1.9);                      // tibialis anterior
+      this.blob(L.ft, [0, 4.5, -0.6], [3.1, 7.5, 2.3]);
     }
   }
 
@@ -165,15 +219,27 @@ class Body {
     for (const m of pm) this.level[m] = 'primary';
   }
 
+  // Working muscles turn red and contract (shorten + bulge) with the effort of the rep.
   glow(effort) {
-    for (const g of MUSCLE_GROUPS) {
+    for (const g of [...MUSCLE_GROUPS, 'other']) {
       const mat = this.mats[g], lv = this.level[g];
-      if (!lv) { mat.color.copy(COL.idle); mat.emissive.setRGB(0, 0, 0); continue; }
-      const k = lv === 'primary' ? 0.55 + 0.45 * effort : 0.45 + 0.25 * effort;
-      const c = lv === 'primary' ? COL.primary : COL.secondary;
-      mat.color.copy(COL.idle).lerp(c, Math.min(1, k + 0.25));
-      mat.emissive.copy(c).multiplyScalar(0.42 * k);
+      const k = lv === 'primary' ? effort : lv === 'secondary' ? effort * 0.55 : 0;
+      if (!lv) { mat.color.copy(COL.idle); mat.emissive.setRGB(0, 0, 0); }
+      else {
+        const c = lv === 'primary' ? COL.primary : COL.secondary;
+        mat.color.copy(c).lerp(COL.idle, lv === 'primary' ? 0.12 * (1 - effort) : 0.25 * (1 - effort));
+        mat.emissive.copy(c).multiplyScalar(lv === 'primary' ? 0.12 + 0.22 * effort : 0.06 + 0.1 * effort);
+      }
+      for (const m of this.meshes[g]) { const s = m.userData.s0; m.scale.set(s.x * (1 + 0.2 * k), s.y * (1 - 0.08 * k), s.z * (1 + 0.2 * k)); }
     }
+  }
+
+  // Middle of the working muscles in world space (for the Focus camera).
+  focusOn() {
+    this.root.updateMatrixWorld(true);
+    const box = new THREE.Box3(), p = V();
+    for (const g of Object.keys(this.level)) if (this.level[g] === 'primary') for (const m of this.meshes[g]) box.expandByPoint(m.getWorldPosition(p));
+    return box.isEmpty() ? null : box;
   }
 }
 
@@ -266,7 +332,7 @@ class Equipment {
       this.held.push({ g, at: 'mid', z0: true });
     }
     if (this.anchor) {
-      this.cables = [1, -1].map(() => { const c = rod(kind === 'band' ? 0.9 : 0.5, kind === 'band' ? plate : dark); c.castShadow = false; return c; });
+      this.cables = [1, -1].map(() => { const c = rod(kind === 'band' ? 0.9 : 0.5, kind === 'band' ? mat(COL.band) : dark); c.castShadow = false; return c; });
     } else this.cables = null;
     if (pat.plate != null) { this.sled = box(4, 44, 30, metal); this.sledAng = pat.plate; } else this.sled = null;
   }
@@ -294,6 +360,7 @@ function makeStage(canvas, { shadows = true, preserve = false } = {}) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: preserve });
   renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.15;
   renderer.shadowMap.enabled = shadows;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   const scene = new THREE.Scene();
@@ -305,8 +372,8 @@ function makeStage(canvas, { shadows = true, preserve = false } = {}) {
   key.shadow.mapSize.set(1024, 1024);
   Object.assign(key.shadow.camera, { left: -150, right: 150, top: 150, bottom: -150, near: 10, far: 700 });
   scene.add(key);
-  const rim = new THREE.DirectionalLight(0xffd2c2, 0.7); rim.position.set(-200, 120, -160); scene.add(rim);
-  const floor = new THREE.Mesh(new THREE.CircleGeometry(115, 64), new THREE.MeshStandardMaterial({ color: 0x8a919c, roughness: 1, transparent: true, opacity: 0.22 }));
+  const rim = new THREE.DirectionalLight(0xbfd4ff, 1.1); rim.position.set(-200, 120, -160); scene.add(rim);
+  const floor = new THREE.Mesh(new THREE.CircleGeometry(115, 64), new THREE.MeshStandardMaterial({ color: 0x3a3f47, roughness: 1, transparent: true, opacity: 0.55 }));
   floor.rotation.x = -Math.PI / 2; floor.position.y = -0.4; floor.receiveShadow = true;
   scene.add(floor);
   const body = new Body(); scene.add(body.root);
@@ -339,9 +406,9 @@ export function defaultPitch(pat, pm = []) {
   return Math.abs(d.y) < 0.55 ? 42 : 12;
 }
 
-function placeCamera(camera, box, yaw, pitch, aspect, zoom = 1) {
-  const c = box.getCenter(V()), size = box.getSize(V());
-  const r = Math.max(size.y * 0.62, Math.hypot(size.x, size.z) * 0.5 / Math.max(aspect, 0.6), 60);
+function placeCamera(camera, box, yaw, pitch, aspect, zoom = 1, focus = null) {
+  const c = (focus || box).getCenter(V()), size = box.getSize(V());
+  const r = focus ? Math.max(28, focus.getSize(V()).length() * 0.62 + 20) : Math.max(size.y * 0.62, Math.hypot(size.x, size.z) * 0.5 / Math.max(aspect, 0.6), 60);
   const dist = (r / Math.tan((camera.fov * Math.PI) / 360)) * 1.08 / zoom;
   const y = (yaw * Math.PI) / 180, p = (pitch * Math.PI) / 180;
   camera.aspect = aspect;
@@ -362,7 +429,7 @@ export class Viewer {
     this.canvas.className = 'gl';
     container.prepend(this.canvas);
     Object.assign(this, makeStage(this.canvas));
-    this.yaw = 32; this.pitch = 10; this.zoom = 1; this.speed = 1; this.playing = false; this.ms = 0;
+    this.yaw = 32; this.pitch = 10; this.zoom = 1; this.focus = false; this.speed = 1; this.playing = false; this.ms = 0;
     this.ro = new ResizeObserver(() => this.resize()); this.ro.observe(container);
     this.bindOrbit();
   }
@@ -372,6 +439,9 @@ export class Viewer {
     this.body.setActivation(pm, sm);
     this.equip.build(this.pat, holdFor(eq));
     this.box = bounds(this.pat);
+    // where the working muscles are at the working end of the rep (for Focus)
+    this.body.pose(joints3d(solve(this.pat.frames[workFrame(this.pat)], this.pat.view)), !!this.pat.supine);
+    this.focusBox = this.body.focusOn();
     this.pm = pm;
     if (!keepView) { this.yaw = defaultYaw(pm, this.pat); this.pitch = defaultPitch(this.pat, pm); }
     this.resize();
@@ -388,7 +458,7 @@ export class Viewer {
 
   frame() {
     if (!this.box) return;
-    placeCamera(this.camera, this.box, this.yaw, this.pitch, this.canvas.clientWidth / (this.canvas.clientHeight || 1), this.zoom);
+    placeCamera(this.camera, this.box, this.yaw, this.pitch, this.canvas.clientWidth / (this.canvas.clientHeight || 1), this.zoom, this.focus ? this.focusBox : null);
     if (!this.playing) this.draw();
   }
 
