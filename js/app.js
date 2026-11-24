@@ -1,6 +1,4 @@
 import * as S from './store.js';
-import { PATTERNS } from './anim.js';
-import { Viewer, thumbnail, webglOK } from './body3d.js';
 import { renderConsistency, streaks } from './consistency.js';
 
 // ------------------------------------------------------------------ data
@@ -8,9 +6,16 @@ let DB = [];
 let byId = new Map();
 const allEx = () => [...S.get().custom, ...DB];
 const reindex = () => { byId = new Map(allEx().map((e) => [e.id, e])); };
-const ex = (id) => byId.get(id) || { id, name: 'Deleted exercise', pm: [], sm: [], ins: [], anim: 'generic', eq: 'body only' };
+// Exercises from the old list that have no GIF match still show by name in past workouts (data/legacy.json).
+let LEGACY = { map: {}, old: {} };
+const ex = (id) => byId.get(id) || (LEGACY.old[id] && { id, ins: [], ...LEGACY.old[id], legacy: true })
+  || { id, name: 'Deleted exercise', pm: [], sm: [], ins: [], eq: 'body only' };
 
-const MUSCLES = ['abdominals', 'abductors', 'adductors', 'biceps', 'calves', 'chest', 'forearms', 'glutes', 'hamstrings', 'lats', 'lower back', 'middle back', 'neck', 'quadriceps', 'shoulders', 'traps', 'triceps'];
+// Exercise animations: GIFs from ExerciseGymGifsDB, loaded from jsDelivr (cached by the service worker once seen).
+const GIF_BASE = 'https://cdn.jsdelivr.net/gh/JahelCuadrado/ExerciseGymGifsDB@v1.1.0/';
+const gifUrl = (e) => (e?.gif ? GIF_BASE + e.gif : null);
+
+const MUSCLES = ['abdominals', 'abductors', 'adductors', 'biceps', 'calves', 'cardio', 'chest', 'forearms', 'glutes', 'hamstrings', 'lats', 'lower back', 'middle back', 'neck', 'quadriceps', 'shoulders', 'traps', 'triceps'];
 const EQUIP = ['barbell', 'dumbbell', 'cable', 'machine', 'body only', 'kettlebells', 'bands', 'e-z curl bar', 'medicine ball', 'exercise ball', 'foam roll', 'other'];
 const CATS = ['strength', 'stretching', 'plyometrics', 'powerlifting', 'olympic weightlifting', 'strongman', 'cardio'];
 
@@ -27,49 +32,19 @@ const ytUrl = (e) => S.get().links[e.id] || `https://www.youtube.com/results?sea
 let cleanups = [];
 const onLeave = (f) => cleanups.push(f);
 
-const GL = webglOK();
-const thumb = (e) => `<img class="thumb" alt="" data-id="${esc(e.id)}" decoding="async">`;
+const thumb = (e) => (gifUrl(e)
+  ? `<img class="thumb" alt="" src="${esc(gifUrl(e))}" loading="lazy" decoding="async">`
+  : `<span class="thumb none" aria-hidden="true">🏋</span>`);
 
-// Render list thumbnails (posed 3D body with the muscles lit) when they scroll into view.
-const thumbObs = new IntersectionObserver((ents) => {
-  for (const en of ents) {
-    if (!en.isIntersecting) continue;
-    const img = en.target; thumbObs.unobserve(img);
-    const e = byId.get(img.dataset.id);
-    if (e && GL) thumbnail(e).then((u) => { img.src = u; });
-  }
-}, { rootMargin: '300px' });
-const drawThumbs = (root) => $$('img.thumb[data-id]:not([src])', root).forEach((i) => thumbObs.observe(i));
-
-const VIEWS = [['3/4', null], ['Front', 0], ['Side', 90], ['Back', 180]];
 const legend = (pm = [], sm = []) => `<div class="legend">
   <span><i class="dot p"></i><b>Primary</b> ${esc(cap(pm.join(', ')) || '—')}</span>
   ${sm.length ? `<span><i class="dot s"></i><b>Secondary</b> ${esc(cap(sm.join(', ')))}</span>` : ''}</div>`;
 
-// The 3D stage: canvas + view buttons. Returns the Viewer (or null without WebGL).
-function mountStage(host, e) {
-  if (!GL) { host.innerHTML = '<p class="muted small gl-off">Your browser has WebGL turned off, so the 3D muscle view can’t be shown.</p>'; return null; }
-  host.insertAdjacentHTML('beforeend', `<div class="views">${VIEWS.map(([l], i) => `<button data-i="${i}" class="${i ? '' : 'on'}">${l}</button>`).join('')}<button class="fx" aria-pressed="false">Focus</button></div>
-    <p class="hint">Drag to rotate · pinch to zoom</p>`);
-  const v = new Viewer(host);
-  v.load(e);
-  const def = v.yaw;
-  const btns = $$('.views button[data-i]', host);
-  $('.views', host).onclick = (ev) => {
-    const b = ev.target.closest('button'); if (!b) return;
-    if (b.classList.contains('fx')) {
-      v.focus = !v.focus; v.zoom = 1; v.frame();
-      b.classList.toggle('on', v.focus); b.setAttribute('aria-pressed', v.focus);
-      return;
-    }
-    const yaw = VIEWS[+b.dataset.i][1];
-    v.zoom = 1; v.setView(yaw ?? def);
-    btns.forEach((x) => x.classList.toggle('on', x === b));
-  };
-  v.onOrbit = () => btns.forEach((x) => x.classList.remove('on'));
-  onLeave(() => v.destroy());
-  return v;
-}
+// The exercise animation (looping GIF) on a white card.
+const gifBox = (e) => (gifUrl(e)
+  ? `<div class="gifbox"><img src="${esc(gifUrl(e))}" alt="${esc(e.name || '')} animation" decoding="async"
+      onerror="this.parentElement.classList.add('off')"><p class="muted small">Animation needs an internet connection the first time.</p></div>`
+  : `<div class="gifbox off"><p class="muted small">No animation for this exercise.</p></div>`);
 
 function toast(msg, action) {
   const t = $('#toast');
@@ -221,7 +196,6 @@ function exList(root, f, { pick } = {}) {
         ${pick ? '<span class="tick">✓</span>' : fs.has(e.id) ? '<span class="star">★</span>' : e.custom ? '<span class="tag">Custom</span>' : ''}
       </${pick ? 'button' : 'a'}>`).join(''));
     shown += chunk.length;
-    drawThumbs(list);
   };
   const refresh = () => {
     items = filterEx(f); shown = 0; list.innerHTML = '';
@@ -270,17 +244,18 @@ function pickExercises(title = 'Add exercises') {
 // ------------------------------------------------------------------ exercise detail
 function viewExercise(main, id) {
   const e = byId.get(id);
-  if (!e) { setTitle('Not found', '#/library'); main.innerHTML = '<div class="empty"><p>That exercise doesn’t exist.</p></div>'; return; }
+  if (!e && LEGACY.map[id]) { history.replaceState(null, '', '#/ex/' + LEGACY.map[id]); return render(); } // old link
+  if (!e) {
+    const lg = LEGACY.old[id];
+    if (lg) { setTitle('Exercise', '#/library'); main.innerHTML = `<div class="empty"><p>“${esc(lg.name)}” is from the old exercise list and has no animation.</p><p class="muted small">Your past sets for it are kept in History.</p></div>`; return; }
+    setTitle('Not found', '#/library'); main.innerHTML = '<div class="empty"><p>That exercise doesn’t exist.</p></div>'; return; }
   setTitle('Exercise', '#/library');
   const st = S.get();
   const fav = st.favorites.includes(e.id);
   const hist = S.historyFor(e.id);
   const chips = [e.lvl, e.eq, e.mech, e.force, e.cat].filter(Boolean).map((c) => `<span class="chip">${esc(cap(c))}</span>`).join('');
   main.innerHTML = `
-    <div class="hero"><div class="stage" id="stage"></div>
-      <div class="hero-ctl"><button class="round" id="pp" aria-label="Pause">❚❚</button>
-        <div class="seg" id="spd">${[0.5, 1, 1.5].map((v) => `<button data-v="${v}" class="${v === 1 ? 'on' : ''}">${v}×</button>`).join('')}</div></div>
-      ${legend(e.pm, e.sm)}</div>
+    <div class="hero">${gifBox(e)}${legend(e.pm, e.sm)}</div>
     <div class="ex-head"><h1>${esc(e.name)}</h1><button class="star-btn ${fav ? 'on' : ''}" id="fav" aria-label="Favourite">★</button></div>
     <div class="chips">${chips}${e.custom ? '<span class="chip acc">Custom</span>' : ''}</div>
     <div class="row gap">
@@ -290,16 +265,6 @@ function viewExercise(main, id) {
     ${(e.ins || []).length ? `<section class="card"><h3>How to do it</h3><ol class="steps">${e.ins.map((s) => `<li>${esc(s)}</li>`).join('')}</ol></section>` : ''}
     <section class="card" id="hist"></section>
     ${e.custom ? `<div class="row gap"><a class="btn ghost" href="#/custom/${encodeURIComponent(e.id)}">Edit</a><button class="btn ghost danger-t" id="del">Delete exercise</button></div>` : ''}`;
-
-  const player = mountStage($('#stage'), e);
-  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const pp = $('#pp');
-  const setPP = (on) => { pp.textContent = on ? '❚❚' : '▶'; pp.setAttribute('aria-label', on ? 'Pause' : 'Play'); };
-  if (player && !reduce) player.play(); setPP(!!player && !reduce);
-  if (player) {
-    pp.onclick = () => setPP(player.toggle());
-    $('#spd').onclick = (ev) => { const b = ev.target.closest('button'); if (!b) return; player.speed = +b.dataset.v; $$('#spd button').forEach((x) => x.classList.toggle('on', x === b)); };
-  } else $('.hero-ctl').hidden = true;
 
   $('#fav').onclick = (ev) => {
     S.update((x) => { const i = x.favorites.indexOf(e.id); i < 0 ? x.favorites.push(e.id) : x.favorites.splice(i, 1); });
@@ -427,7 +392,6 @@ function drawExercises() {
       <div class="row gap"><button class="btn sm ghost" data-add="${i}">＋ Set</button>${we.sets.length > 1 ? `<button class="btn sm ghost" data-rm="${i}">− Set</button>` : ''}</div>
     </section>`;
   }).join('');
-  drawThumbs(root);
 
   root.oninput = (e) => {
     const inp = e.target.closest('input.num'); if (!inp) return;
@@ -585,7 +549,6 @@ function viewWorkoutDetail(main, id) {
     ${w.exercises.map((we) => { const e = ex(we.exId); return `<section class="card"><a class="wo-ex-t" href="#/ex/${encodeURIComponent(e.id)}">${thumb(e)}<span><b>${esc(e.name)}</b></span></a>
       <ol class="setlist">${we.sets.map((s) => `<li><span>${s.w ? S.fmtW(s.w) : 'Bodyweight'}</span><span>× ${s.r}</span>${S.e1rm(s.w, s.r) ? `<span class="muted small">e1RM ${S.toDisplay(S.e1rm(s.w, s.r))}</span>` : ''}</li>`).join('')}</ol></section>`; }).join('')}
     <div class="row gap wrap"><button class="btn primary" id="again">Repeat this workout</button><button class="btn ghost" id="ren">Rename</button><button class="btn ghost danger-t" id="del">Delete</button></div>`;
-  drawThumbs(main);
   $('#again').onclick = async () => {
     if (S.get().active && !(await ask('You have a workout in progress. Replace it?', 'Replace', true))) return;
     startFrom(w.name, w.exercises.map((e) => e.exId)); go('#/workout');
@@ -602,31 +565,32 @@ function viewWorkoutDetail(main, id) {
 function viewCustom(main, id) {
   const editing = id ? S.get().custom.find((c) => c.id === id) : null;
   setTitle(editing ? 'Edit exercise' : 'New exercise', '#/library');
-  const e = editing || { name: '', pm: ['chest'], eq: 'barbell', cat: 'strength', anim: 'bench', ins: [] };
-  const animOpts = Object.entries(PATTERNS).map(([k, p]) => `<option value="${k}" ${k === e.anim ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
+  const e = editing || { name: '', pm: ['chest'], eq: 'barbell', cat: 'strength', ins: [] };
+  const like = DB.find((d) => d.gif && d.gif === e.gif);
   main.innerHTML = `<form class="stack" id="cf">
-    <div class="hero sm"><div class="stage" id="stage"></div><div id="lg">${legend(e.pm, [])}</div></div>
+    <div class="hero sm"><div id="gb">${gifBox(e)}</div><div id="lg">${legend(e.pm, [])}</div></div>
     <label class="lbl">Name<input class="inp" name="name" required maxlength="60" value="${esc(e.name)}" placeholder="e.g. Landmine press"></label>
     <div class="grid2">
       <label class="lbl">Main muscle<select class="inp" name="pm">${MUSCLES.map((m) => `<option ${m === e.pm[0] ? 'selected' : ''} value="${m}">${cap(m)}</option>`).join('')}</select></label>
       <label class="lbl">Equipment<select class="inp" name="eq">${EQUIP.map((m) => `<option ${m === e.eq ? 'selected' : ''} value="${m}">${cap(m)}</option>`).join('')}</select></label>
       <label class="lbl">Type<select class="inp" name="cat">${CATS.map((m) => `<option ${m === e.cat ? 'selected' : ''} value="${m}">${cap(m)}</option>`).join('')}</select></label>
-      <label class="lbl">Animation<select class="inp" name="anim">${animOpts}</select></label>
     </div>
+    <label class="lbl">Animation <span class="muted small">(optional: show the GIF of a similar exercise)</span>
+      <input class="inp" name="anim" list="anim-list" placeholder="Search exercises…" value="${esc(like?.name || '')}" autocomplete="off"></label>
+    <datalist id="anim-list">${DB.map((d) => `<option value="${esc(d.name)}">`).join('')}</datalist>
     <label class="lbl">Steps <span class="muted small">(one per line, optional)</span><textarea class="inp" name="ins" rows="4">${esc(e.ins.join('\n'))}</textarea></label>
     <button class="btn primary wide">${editing ? 'Save changes' : 'Create exercise'}</button></form>`;
   const f = $('#cf');
-  const player = mountStage($('#stage'), e);
-  player?.play();
+  const pick = () => DB.find((d) => d.name.toLowerCase() === f.anim.value.trim().toLowerCase());
   const sync = () => {
-    player?.load({ anim: f.anim.value, eq: f.eq.value, pm: [f.pm.value] }, { keepView: true });
+    $('#gb').innerHTML = gifBox({ gif: pick()?.gif, name: f.name.value });
     $('#lg').innerHTML = legend([f.pm.value], []);
   };
-  f.anim.onchange = sync; f.eq.onchange = sync; f.pm.onchange = sync;
+  f.anim.oninput = sync; f.pm.onchange = sync;
   f.onsubmit = (ev) => {
     ev.preventDefault();
     const row = { id: editing?.id || 'c_' + S.uid(), name: f.name.value.trim(), pm: [f.pm.value], sm: [], eq: f.eq.value, cat: f.cat.value,
-      anim: f.anim.value, ins: f.ins.value.split('\n').map((s) => s.trim()).filter(Boolean), lvl: 'beginner', custom: true };
+      gif: pick()?.gif, ins: f.ins.value.split('\n').map((s) => s.trim()).filter(Boolean), lvl: 'beginner', custom: true };
     S.update((x) => { if (editing) x.custom = x.custom.map((c) => (c.id === row.id ? row : c)); else x.custom.push(row); });
     reindex();
     history.replaceState(null, '', `#/ex/${encodeURIComponent(row.id)}`); render();
@@ -687,6 +651,21 @@ function applyTheme() {
 }
 
 // ------------------------------------------------------------------ boot
+// The exercise list switched to the GIF library (new ids). Point saved workouts, routines and
+// favourites at the matching new exercise; ids without a match stay and show via LEGACY.old.
+function migrateIds() {
+  const st = S.get();
+  if (st.settings.idsV >= 2) return;
+  const m = (id) => LEGACY.map[id] || id;
+  S.update((x) => {
+    for (const w of [...x.workouts, x.active].filter(Boolean)) for (const e of w.exercises) e.exId = m(e.exId);
+    for (const r of x.routines) r.exIds = r.exIds.map(m);
+    x.favorites = [...new Set(x.favorites.map(m))];
+    x.links = Object.fromEntries(Object.entries(x.links).map(([k, v]) => [m(k), v]));
+    x.settings.idsV = 2;
+  });
+}
+
 async function boot() {
   applyTheme();
   $('#gear').onclick = () => go('#/settings');
@@ -696,11 +675,13 @@ async function boot() {
   try {
     const r = await fetch('data/exercises.json');
     DB = await r.json();
+    LEGACY = await (await fetch('data/legacy.json')).json();
   } catch (e) {
     $('#view').innerHTML = '<div class="empty"><p>Couldn’t load the exercise list.</p><p class="muted small">Open the app once while online so it can save itself for offline use.</p></div>';
     return;
   }
   reindex();
+  migrateIds();
   window.addEventListener('hashchange', render);
   render();
   if (S.get().active?.restEnd > Date.now()) runRest();

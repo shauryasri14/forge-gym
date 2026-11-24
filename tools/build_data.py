@@ -1,182 +1,129 @@
-"""Build data/exercises.json from free-exercise-db (public domain, github.com/yuhonas/free-exercise-db).
+"""Build data/exercises.json (+ data/legacy.json) for Forge.
 
-python tools/build_data.py [path/to/exercises.json]   (downloads the dataset when no path is given)
+python tools/build_data.py [--report]
 
-Each exercise gets an `anim` pattern id (see PATTERNS in js/anim.js): the first matching name rule
-wins, then a fallback by category / primary muscle / force. Run with --report to see the counts and
-the names that only matched a fallback.
+The exercise list and the animated GIFs come from ExerciseGymGifsDB (github.com/JahelCuadrado/ExerciseGymGifsDB,
+pinned to GIF_TAG); the app loads each GIF from jsDelivr at runtime, nothing is copied into this repo.
+Where an exercise also exists in free-exercise-db (public domain, github.com/yuhonas/free-exercise-db; the
+app's previous list), its better step-by-step instructions, level, mechanic and force are merged in.
+
+data/legacy.json maps the old free-exercise-db ids (still in people's saved workouts) to the new ids,
+and keeps name/muscles/equipment for old ids that have no GIF match so past workouts still show them.
 """
 import json
 import re
 import sys
 import urllib.request
-from collections import Counter
 from pathlib import Path
 
-SRC = "https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/dist/exercises.json"
-OUT = Path(__file__).resolve().parent.parent / "data" / "exercises.json"
+GIF_TAG = "v1.1.0"
+GIF_SRC = f"https://cdn.jsdelivr.net/gh/JahelCuadrado/ExerciseGymGifsDB@{GIF_TAG}/api/en/exercises.json"
+OLD_SRC = "https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/dist/exercises.json"
+DATA = Path(__file__).resolve().parent.parent / "data"
 
-# (regex on the lowercased name, pattern). Order matters: specific before general.
-RULES = [
-    (r"foam roll|smr|self.?myofascial|lacrosse ball|roller", "foamRoll"),
-    (r"neck|head harness|chin to chest|isometric neck", "neck"),
-    (r"jump rope|rope jump", "jumpRope"),
-    (r"wrist|finger|forearm|pinch|gripper|hand squeeze|grip crush|pronation|supination", "wristCurl"),
-    (r"(internal|external) rotation|cuban press", "facePull"),
-    (r"front (barbell )?squat", "frontSquat"),
-    (r"skull|lying triceps|lying.*extension|french press|tate press|jm press|tricep press", "skullCrusher"),
-    (r"upright.*row", "uprightRow"),
-    (r"dead bug|leg tucks", "legRaise"),
-    (r"pallof", "frontRaise"),
-    (r"seated calf|calf.*seated", "seatedCalf"),
-    (r"calf|calves", "calfRaise"),
-    (r"bicycling|bike|cycling|spinning|recumbent", "bike"),
-    (r"rowing,? stationary|rowing machine|ergometer", "rower"),
-    (r"running|jogging|treadmill|sprint|stair|elliptical|skating|trail|high knee|butt kick", "run"),
-    (r"walk|carry|farmer|yoke|sled (drag|push)|prowler|duck walk|bear crawl|crawl", "walk"),
-    (r"burpee", "burpee"),
-    (r"jumping jack|star jump|side to side|lateral hop", "jumpingJack"),
-    (r"mountain climber", "mountainClimber"),
-    (r"box jump|depth jump|jump onto|onto box|box skip|hurdle", "boxJump"),
-    (r"thruster", "thruster"),
-    (r"snatch", "snatch"),
-    (r"clean|high pull(?!ey)|hang pull|scoop", "clean"),
-    (r"jerk|push press|split jerk", "pushPress"),
-    (r"swing", "kbSwing"),
-    (r"step.?up|step up", "stepUp"),
-    (r"jump|bound|\bhops?\b|skip|leap", "jump"),
-    (r"side plank", "sidePlank"),
-    (r"plank|hollow|bridge hold|isometric|wall sit|l-sit|static", "plank"),
-    (r"rollout|roll-?out|ab roller|ab wheel", "rollout"),
-    (r"russian twist|\btwists?\b|windmill|rotational", "russianTwist"),
-    (r"woodchop|wood chop|chop|slam|figure 8|around the world|halo", "woodchop"),
-    (r"side bend|side band|saxon", "sideBend"),
-    (r"hanging (leg|knee)|knee raise|leg raise.*(hang|captain|chair)|toes to bar|hanging pike", "hangingLegRaise"),
-    (r"leg raise|leg lift|flutter|scissor|leg pull|reverse crunch|v-?up|jackknife|pike|knee tuck|bicycle", "legRaise"),
-    (r"sit-?up|situp|sit up", "situp"),
-    (r"crunch|ab (crunch|machine)|cable crunch|abdominal", "crunch"),
-    (r"bird dog|donkey kick|kickback.*glute|glute kickback|quadruped|fire hydrant|hip extension|all fours|\bcat\b|\bcow\b|mule kick", "kneeling"),
-    (r"hip thrust|thrust", "hipThrust"),
-    (r"bridge|pelvic tilt|hip lift|hip raise", "bridge"),
-    (r"abduct|clam|band walk|monster walk|lateral band", "abduction"),
-    (r"adduct", "adduction"),
-    (r"side lunge|lateral lunge|cossack", "sideLunge"),
-    (r"lunge|split squat|bulgarian|scissors", "lunge"),
-    (r"leg press|hack squat|sled", "legPress"),
-    (r"leg extension|knee extension", "legExtension"),
-    (r"leg curl|hamstring curl|glute.?ham|nordic|natural glute|ball leg curl", "legCurl"),
-    (r"seated calf|calf.*seated", "seatedCalf"),
-    (r"calf|calves|heel raise|toe raise|tibialis|donkey calf|ankle", "calfRaise"),
-    (r"front squat|zercher", "frontSquat"),
-    (r"goblet|plie|sumo squat", "gobletSquat"),
-    (r"squat", "squat"),
-    (r"good ?morning", "goodMorning"),
-    (r"hyperextension|back extension|superman|reverse hyper|back raise", "hyperext"),
-    (r"romanian|stiff.?leg|rdl|single leg deadlift|straight.?leg deadlift", "rdl"),
-    (r"deadlift|rack pull|pull through|atlas|tire flip|keg|stone|axle", "deadlift"),
-    (r"pullover|pull-over", "pullover"),
-    (r"straight.?arm|lat pushdown", "straightArmPulldown"),
-    (r"pull[- ]?ups?\b|chin[- ]?ups?\b|chins?\b|muscle.?up|rope climb", "pullup"),
-    (r"pulldown|pull-down|pull down", "latPulldown"),
-    (r"inverted row|body row|bodyweight row|australian", "invertedRow"),
-    (r"face pull", "facePull"),
-    (r"upright row", "uprightRow"),
-    (r"shrug", "shrug"),
-    (r"seated (cable )?row|cable row|low row|machine row|seated.*row|elevated cable", "seatedRow"),
-    (r"\brows?\b|\browing\b", "row"),
-    (r"reverse fly|rear delt|reverse flye|bent.?over.*(raise|lateral)|rear lateral|reverse pec", "rearDelt"),
-    (r"crossover|cable fly|cable flye|standing.*fly|cable chest", "cableFly"),
-    (r"fly|flye|pec deck|butterfly", "fly"),
-    (r"decline.*(press|bench|push)", "declineBench"),
-    (r"incline.*(press|bench)", "inclineBench"),
-    (r"push-?up|push up|pushup|press-?up", "pushup"),
-    (r"\bdips?\b", "dip"),
-    (r"chest press|machine press|leverage.*press|smith machine.*bench|floor press|bench press|board press|pin press|close.?grip.*press|guillotine", "bench"),
-    (r"lateral raise|side raise|lateral.*raise|laterals|deltoid raise|iron cross|crucifix|y raise|scaption|pull apart|shoulder raise|car drivers|pirate", "lateralRaise"),
-    (r"front raise|front.*raise|front plate|plate raise|battling rope|dumbbell raise", "frontRaise"),
-    (r"seated.*(press|military)|arnold", "seatedPress"),
-    (r"overhead press|shoulder press|military|push press|press behind|handstand|pike press|landmine press|bradford|z press|press$", "ohp"),
-    (r"skull|lying triceps|lying.*extension|french press|tate press|jm press", "skullCrusher"),
-    (r"overhead.*(extension|triceps)|triceps extension|tricep extension|standing.*extension", "overheadExt"),
-    (r"kickback", "kickback"),
-    (r"pushdown|push-?down|press-?down", "pushdown"),
-    (r"preacher|concentration|spider curl|scott", "preacherCurl"),
-    (r"wrist|finger|forearm|pinch|gripper|hand squeeze|grip crush|pronation|supination", "wristCurl"),
-    (r"curl", "curl"),
-]
-
-STRETCH_BY_MUSCLE = {
-    "hamstrings": "stretchFold", "lower back": "stretchFold", "calves": "stretchFold",
-    "quadriceps": "stretchQuad", "abductors": "stretchSeated", "adductors": "stretchSeated",
-    "glutes": "stretchSeated", "chest": "stretchChest", "biceps": "stretchChest",
-    "shoulders": "stretchArm", "triceps": "stretchArm", "lats": "stretchSide", "middle back": "stretchArm",
-    "abdominals": "stretchSide", "traps": "neck", "neck": "neck", "forearms": "stretchArm",
-}
-
-FALLBACK_BY_MUSCLE = {
-    "quadriceps": "squat", "hamstrings": "rdl", "glutes": "bridge", "calves": "calfRaise",
-    "chest": "bench", "shoulders": "ohp", "triceps": "pushdown", "biceps": "curl", "forearms": "wristCurl",
-    "lats": "latPulldown", "middle back": "row", "lower back": "hyperext", "traps": "shrug",
-    "abdominals": "crunch", "adductors": "adduction", "abductors": "abduction", "neck": "neck",
-}
+MUSCLE = {"abs": "abdominals", "pectorals": "chest", "delts": "shoulders", "upper-back": "middle back", "quads": "quadriceps",
+          "spine": "lower back", "serratus-anterior": "chest", "levator-scapulae": "neck", "cardio": "cardio"}
+EQUIP = {"bodyweight": "body only", "lever": "machine", "smith": "machine", "band": "bands", "kettlebell": "kettlebells",
+         "ez-bar": "e-z curl bar", "sled": "other"}
+OLD_EQ = {"body only": "bodyweight", "barbell": "barbell", "dumbbell": "dumbbell", "cable": "cable", "machine": "machine",
+          "kettlebells": "kettlebell", "bands": "band", "e-z curl bar": "ez-bar"}
+SYN = [(r"\bpull ?ups?\b|\bpullups?\b", "pull up"), (r"\bchin ?ups?\b|\bchinups?\b", "chin up"), (r"\bpush ?ups?\b|\bpushups?\b", "push up"),
+       (r"\bsit ?ups?\b|\bsitups?\b", "sit up"), (r"\bdips?\b", "dip"), (r"\bcurls\b", "curl"), (r"\braises\b", "raise"),
+       (r"\bdumbbells\b", "dumbbell"), (r"\bkettlebells\b", "kettlebell"), (r"\btricep\b", "triceps"), (r"\bbicep\b", "biceps"),
+       (r"\bex(ercise)? ball\b|\bswiss ball\b", "stability ball"), (r"\be ?z\b", "ez"), (r"\bflyes\b|\bflys\b", "fly"),
+       (r"\bv\d\b|\bmale\b|\bfemale\b", "")]
+# Common lifts the name matcher misses (old free-exercise-db id -> GIF slug).
+MANUAL = {"Barbell_Squat": "barbell-full-squat", "Plank": "weighted-front-plank", "Romanian_Deadlift": "barbell-romanian-deadlift",
+          "Leg_Press": "sled-45-leg-press", "Wide-Grip_Lat_Pulldown": "cable-lat-pulldown-full-range-of-motion",
+          "Standing_Military_Press": "barbell-standing-wide-military-press", "Seated_Cable_Rows": "cable-seated-row",
+          "Triceps_Pushdown": "cable-pushdown", "Hammer_Curls": "dumbbell-hammer-curl", "Side_Lateral_Raise": "dumbbell-lateral-raise",
+          "Leg_Extensions": "lever-leg-extension", "Crunches": "crunch-floor", "Barbell_Shrug": "barbell-shrug",
+          "Dumbbell_Shrug": "dumbbell-shrug", "Goblet_Squat": "dumbbell-goblet-squat", "Sumo_Deadlift": "barbell-sumo-deadlift",
+          "Dumbbell_Lunges": "dumbbell-lunge", "Burpee": "burpee"}
+STOP = {"with", "on", "the", "a", "to", "and", "of", "grip", "medium", "version", "-"}
 
 
-def classify(x):
-    name = x["name"].lower()
-    muscle = (x["primaryMuscles"] or ["?"])[0]
-    if x["category"] == "stretching":
-        if re.search(r"lunge|hip flexor|kneeling hip", name):
-            return "stretchLunge", True
-        if re.search(r"foam|roll|smr", name):
-            return "foamRoll", True
-        if re.search(r"seated|sit|butterfly|lying|on back|supine|pigeon|knee to chest", name):
-            return "stretchSeated", True
-        return STRETCH_BY_MUSCLE.get(muscle, "stretchSide"), True
-    for rx, pat in RULES:
-        if re.search(rx, name):
-            if pat == "squat" and x["equipment"] in ("body only", None):
-                pat = "bwSquat"
-            if pat == "squat" and x["equipment"] in ("dumbbell", "kettlebells"):
-                pat = "gobletSquat"
-            if pat == "bench" and x["equipment"] in ("machine", "cable"):
-                pat = "machinePress"
-            if pat == "curl" and "hammer" not in name and x["equipment"] == "cable":
-                pat = "curl"
-            return pat, True
-    if x["category"] == "cardio":
-        return "run", False
-    if x["category"] == "plyometrics":
-        return "jump", False
-    return FALLBACK_BY_MUSCLE.get(muscle, "generic"), False
+def tokens(name):
+    s = name.lower().replace("-", " ").replace("/", " ")
+    s = re.sub(r"[^a-z0-9 ]", " ", s)
+    for a, b in SYN:
+        s = re.sub(a, b, s)
+    return frozenset(t for t in s.split() if t not in STOP)
+
+
+def fetch(url):
+    with urllib.request.urlopen(url) as r:
+        return json.load(r)
 
 
 def main():
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    if args:
-        data = json.loads(Path(args[0]).read_text(encoding="utf-8"))
-    else:
-        with urllib.request.urlopen(SRC) as r:
-            data = json.loads(r.read().decode("utf-8"))
-    out, fallback = [], []
-    for x in data:
-        anim, ruled = classify(x)
-        if not ruled:
-            fallback.append((x["name"], anim))
-        out.append({
-            "id": x["id"], "name": x["name"], "cat": x["category"], "eq": x["equipment"] or "body only",
-            "lvl": x["level"], "force": x["force"], "mech": x["mechanic"],
-            "pm": x["primaryMuscles"], "sm": x["secondaryMuscles"], "ins": x["instructions"], "anim": anim,
-        })
+    gifs = fetch(GIF_SRC)["exercises"]
+    old = fetch(OLD_SRC)
+    old_ids = {o["id"] for o in old}
+    gtok = [(tokens(g["name"]), g) for g in gifs]
+
+    # best GIF match for each old exercise (token Jaccard, nudged by equipment agreement)
+    pairs = []
+    for o in old:
+        ot = tokens(o["name"])
+        if not ot:
+            continue
+        best, bs = None, 0.0
+        for gt, g in gtok:
+            inter = len(ot & gt)
+            if not inter:
+                continue
+            sc = inter / len(ot | gt)
+            oe = OLD_EQ.get(o.get("equipment") or "")
+            if oe == g["equipment"]:
+                sc += 0.05
+            elif oe and g["equipment"] in OLD_EQ.values():
+                sc -= 0.1
+            if sc > bs:
+                best, bs = g, sc
+        if best and bs >= 0.74:
+            pairs.append((bs, o, best))
+    # one old exercise per GIF (best score wins)
+    by_slug = {g["slug"]: g for g in gifs}
+    by_old = {o["id"]: o for o in old}
+    pairs += [(9, by_old[a], by_slug[b]) for a, b in MANUAL.items() if a in by_old]
+    taken, match = {}, {}
+    for bs, o, g in sorted(pairs, key=lambda p: -p[0]):
+        if g["slug"] in taken or o["id"] in match:
+            continue
+        taken[g["slug"]] = o
+        match[o["id"]] = g["slug"]
+
+    out = []
+    for g in gifs:
+        o = taken.get(g["slug"])
+        pm = [MUSCLE.get(g["muscle"], g["muscle"])]
+        sm = []
+        for m in g["secondaryMuscles"]:
+            m = MUSCLE.get(m, m)
+            if m not in pm and m not in sm:
+                sm.append(m)
+        e = {"id": g["slug"], "name": g["name"], "cat": g["category"], "eq": EQUIP.get(g["equipment"], g["equipment"]),
+             "pm": pm, "sm": sm, "ins": g["instructions"], "gif": g["file"]}
+        if o:
+            e["ins"] = o.get("instructions") or e["ins"]
+            for k, ok in (("lvl", "level"), ("mech", "mechanic"), ("force", "force")):
+                if o.get(ok):
+                    e[k] = o[ok]
+        out.append(e)
     out.sort(key=lambda e: e["name"].lower())
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text(json.dumps(out, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-    print(f"{len(out)} exercises -> {OUT} ({OUT.stat().st_size // 1024} KB)")
+    assert len({e["id"] for e in out}) == len(out) and not ({e["id"] for e in out} & old_ids)
+
+    gone = {o["id"]: {"name": o["name"], "pm": o.get("primaryMuscles", []), "sm": o.get("secondaryMuscles", []),
+                      "eq": o.get("equipment") or "other"} for o in old if o["id"] not in match}
+    DATA.mkdir(exist_ok=True)
+    (DATA / "exercises.json").write_text(json.dumps(out, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    (DATA / "legacy.json").write_text(json.dumps({"map": match, "old": gone}, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    print(f"{len(out)} exercises, {len(match)} old ids matched, {len(gone)} old ids without a GIF")
     if "--report" in sys.argv:
-        print(Counter(e["anim"] for e in out).most_common())
-        print(f"\n{len(fallback)} matched only a fallback:")
-        for n, a in fallback:
-            print(f"  {a:16} {n}")
+        by = {g["slug"]: g for g in gifs}
+        for oid, slug in sorted(match.items()):
+            print(f"  {oid:45} -> {by[slug]['name']}")
 
 
-if __name__ == "__main__":
-    main()
+main()
