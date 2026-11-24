@@ -249,21 +249,21 @@ details.mini form { margin-top: 8px; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 
 /* ---------- 3D muscle stage ---------- */
-.stage { position: relative; border-radius: 14px; overflow: hidden; background: radial-gradient(110% 85% at 50% 35%, #2c3038, #101215 72%); }
+.stage { position: relative; border-radius: 14px; overflow: hidden; background: #fff; }
 canvas.gl { display: block; width: 100%; aspect-ratio: 1 / .95; max-height: 54vh; touch-action: none; cursor: grab; }
 canvas.gl:active { cursor: grabbing; }
 .hero.sm canvas.gl { max-height: 36vh; }
 .views { position: absolute; top: 8px; left: 8px; right: 8px; display: flex; gap: 4px; justify-content: center; }
-.views button { padding: 5px 10px; border-radius: 99px; font-size: 12.5px; font-weight: 600; color: #b4bcc8;
-  background: rgba(16, 18, 21, .6); border: 1px solid rgba(255, 255, 255, .14); backdrop-filter: blur(6px); }
-.views button.on { color: #fff; border-color: var(--acc); background: rgba(255, 107, 44, .25); }
+.views button { padding: 5px 10px; border-radius: 99px; font-size: 12.5px; font-weight: 600; color: #4a4f57;
+  background: rgba(255, 255, 255, .8); border: 1px solid #d9dce0; backdrop-filter: blur(6px); }
+.views button.on { color: #111; border-color: var(--acc); background: rgba(255, 107, 44, .14); }
 .views .fx { margin-left: 6px; }
-.views .fx.on { border-color: #d4161f; background: rgba(212, 22, 31, .35); }
-.hint { position: absolute; bottom: 6px; left: 0; right: 0; text-align: center; margin: 0; font-size: 11.5px; color: #8790a0; pointer-events: none; }
+.views .fx.on { color: #fff; border-color: #c8231f; background: #c8231f; }
+.hint { position: absolute; bottom: 6px; left: 0; right: 0; text-align: center; margin: 0; font-size: 11.5px; color: #8a8f98; pointer-events: none; }
 .gl-off { padding: 40px 16px; text-align: center; }
 .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 8px 6px 0; font-size: 13px; }
 .legend b { font-weight: 600; margin-right: 2px; }
 .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
-.dot.p { background: #d4161f; box-shadow: 0 0 8px #d4161f; } .dot.s { background: #f0763c; }
-img.thumb { width: 58px; height: 51px; flex: none; border-radius: 9px; background: #16181c; object-fit: cover; }
+.dot.p { background: #c8231f; box-shadow: 0 0 6px #c8231f; } .dot.s { background: #e9765f; }
+img.thumb { width: 58px; height: 51px; flex: none; border-radius: 9px; background: #fff; object-fit: cover; }
 .wo-ex-t img.thumb { width: 46px; height: 40px; }

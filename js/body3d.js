@@ -18,9 +18,9 @@ const AX = V(1, 0, 0), AY = V(0, 1, 0), AZ = V(0, 0, 1);
 const NOMINAL = { torso: 50, neck: 16, ua: 27, fa: 25, th: 38, sh: 36, ft: 11 };
 
 const COL = {
-  base: new THREE.Color('#6f6b68'), idle: new THREE.Color('#d8d1cb'),
-  primary: new THREE.Color('#d4161f'), secondary: new THREE.Color('#f0763c'),
-  equip: new THREE.Color('#262a30'), plate: new THREE.Color('#30353d'), metal: new THREE.Color('#b9c1c9'), band: new THREE.Color('#3f7be0'),
+  base: new THREE.Color('#e9e6e3'), idle: new THREE.Color('#f5f2ef'), shorts: new THREE.Color('#2a2a2c'),
+  primary: new THREE.Color('#c8231f'), secondary: new THREE.Color('#e9765f'), line: new THREE.Color('#55514e'),
+  equip: new THREE.Color('#2a2b2e'), plate: new THREE.Color('#222326'), metal: new THREE.Color('#9da4ab'), frame: new THREE.Color('#f2f3f4'), band: new THREE.Color('#3f7be0'),
 };
 
 // ------------------------------------------------------------------ 2D solve -> 3D joints
@@ -102,15 +102,18 @@ class Body {
   constructor() {
     this.root = new THREE.Group();
     FIBRE ||= fibreTexture();
-    this.baseMat = new THREE.MeshStandardMaterial({ color: COL.base, roughness: 0.8, metalness: 0.02 });
+    this.baseMat = new THREE.MeshStandardMaterial({ color: COL.base, roughness: 0.75, metalness: 0 });
+    this.shortsMat = new THREE.MeshStandardMaterial({ color: COL.shorts, roughness: 0.9, metalness: 0 });
+    this.lineMat = new THREE.MeshBasicMaterial({ color: COL.line, side: THREE.BackSide });
     const muscleMat = () => new THREE.MeshPhysicalMaterial({ color: COL.idle.clone(), map: FIBRE, bumpMap: FIBRE, bumpScale: 1.2,
-      roughness: 0.55, clearcoat: 0.3, clearcoatRoughness: 0.55, emissive: new THREE.Color(0) });
+      roughness: 0.6, clearcoat: 0.2, clearcoatRoughness: 0.6, emissive: new THREE.Color(0) });
     this.mats = {}; this.meshes = {};
     for (const g of [...MUSCLE_GROUPS, 'other']) { this.mats[g] = muscleMat(); this.meshes[g] = []; }
     const seg = () => { const g = new THREE.Group(); g.matrixAutoUpdate = false; this.root.add(g); return g; };
     this.torso = seg(); this.neck = seg();
     this.limbs = [1, -1].map((s) => ({ s, ua: seg(), fa: seg(), th: seg(), sh: seg(), ft: seg() }));
     this.build();
+    this.outline();
     this.level = {};
   }
 
@@ -138,7 +141,7 @@ class Body {
   build() {
     const T = this.torso, mus = this.mus.bind(this);
     // torso base (local x lateral, y up from the hip centre, z front)
-    this.blob(T, [0, 4, 0], [12, 8.5, 8.2]);
+    this.blob(T, [0, 4, 0], [12, 8.5, 8.2]).material = this.shortsMat;
     this.blob(T, [0, 19, -0.5], [10.5, 13, 7.2]);
     this.blob(T, [0, 36, -0.4], [13.8, 15.5, 9]);
     this.blob(T, [0, 47, -1], [15.5, 4.2, 6.5]);
@@ -183,6 +186,7 @@ class Body {
       mus(L.fa, 'forearms', [0.4 * o, 9, -1.3], 8.4, 2.4, 2.2);                  // extensors
       this.blob(L.fa, [0, 27.5, 0], [1.9, 3.8, 2.9]);                            // hand
       this.cap(L.th, 4.4, 38);
+      const sl = new THREE.Mesh(new THREE.CylinderGeometry(5.6, 6.6, 9, 20), this.shortsMat); sl.position.y = 3.5; sl.castShadow = true; L.th.add(sl);
       mus(L.th, 'quadriceps', [0.3 * o, 19, 4.1], 14, 3.4, 3.2);                 // rectus femoris
       mus(L.th, 'quadriceps', [3 * o, 19.5, 1.6], 15, 3.6, 3.8);                 // vastus lateralis
       mus(L.th, 'quadriceps', [-2.5 * o, 29, 2.5], 7.2, 3.2, 3.2);               // vastus medialis
@@ -197,6 +201,21 @@ class Body {
       mus(L.sh, 'calves', [0, 18, -2.1], 9, 3.2, 2.4);                           // soleus
       mus(L.sh, 'other', [0.9 * o, 15, 2.2], 11, 1.9, 1.9);                      // tibialis anterior
       this.blob(L.ft, [0, 4.5, -0.6], [3.1, 7.5, 2.3]);
+    }
+  }
+
+  // Illustration-style contour: a slightly larger back-face copy of every mesh, drawn dark.
+  outline() {
+    const T = 0.32, list = [];
+    this.root.traverse((m) => { if (m.isMesh && m.material !== this.lineMat) list.push(m); });
+    for (const m of list) {
+      m.geometry.computeBoundingSphere();
+      const r = m.geometry.boundingSphere.radius, s = m.scale;
+      const o = new THREE.Mesh(m.geometry, this.lineMat);
+      const k = (a, rad) => 1 + T / Math.max(0.5, a * rad);
+      const gr = m.geometry === SPH || m.geometry === SPINDLE ? 1 : Math.min(r, 6);
+      o.scale.set(k(s.x, gr), k(s.y, m.geometry === SPINDLE ? 1 : gr) , k(s.z, gr));
+      m.add(o);
     }
   }
 
@@ -224,11 +243,11 @@ class Body {
     for (const g of [...MUSCLE_GROUPS, 'other']) {
       const mat = this.mats[g], lv = this.level[g];
       const k = lv === 'primary' ? effort : lv === 'secondary' ? effort * 0.55 : 0;
-      if (!lv) { mat.color.copy(COL.idle); mat.emissive.setRGB(0, 0, 0); }
+      if (!lv) { mat.color.copy(g === 'glutes' ? COL.shorts : COL.idle); mat.emissive.setRGB(0, 0, 0); }
       else {
         const c = lv === 'primary' ? COL.primary : COL.secondary;
         mat.color.copy(c).lerp(COL.idle, lv === 'primary' ? 0.12 * (1 - effort) : 0.25 * (1 - effort));
-        mat.emissive.copy(c).multiplyScalar(lv === 'primary' ? 0.12 + 0.22 * effort : 0.06 + 0.1 * effort);
+        mat.emissive.copy(c).multiplyScalar(lv === 'primary' ? 0.05 + 0.12 * effort : 0.03 + 0.06 * effort);
       }
       for (const m of this.meshes[g]) { const s = m.userData.s0; m.scale.set(s.x * (1 + 0.2 * k), s.y * (1 - 0.08 * k), s.z * (1 + 0.2 * k)); }
     }
@@ -259,7 +278,8 @@ class Equipment {
   build(pat, hold) {
     this.clear();
     const P = (p, z = 0) => V(p[0] - 120, 200 - p[1], z);
-    const dark = mat(COL.equip), metal = mat(COL.metal, { metalness: 0.6, roughness: 0.35 }), plate = mat(COL.plate, { roughness: 0.45 });
+    const dark = mat(COL.equip, { metalness: 0, roughness: 0.7 }), metal = mat(COL.metal, { metalness: 0.6, roughness: 0.35 }), plate = mat(COL.plate, { roughness: 0.45 }),
+      frame = mat(COL.frame, { metalness: 0, roughness: 0.5 });
     const box = (w, h, d, m) => this.add(new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m));
     const rod = (r, m) => this.add(new THREE.Mesh(new THREE.CylinderGeometry(r, r, 1, 14), m));
     const slab = (a, b, width, thick, m) => {
@@ -273,11 +293,11 @@ class Equipment {
       if (pr.k === 'bench') {
         slab(pr.a, pr.b, 26, 6, dark);
         const mid = P([(pr.a[0] + pr.b[0]) / 2, Math.max(pr.a[1], pr.b[1])]);
-        for (const dx of [-20, 20]) { const leg = rod(1.6, metal); placeBetween(leg, V(mid.x + dx, mid.y - 4, 0), V(mid.x + dx * 1.15, 0, 0)); }
+        for (const dx of [-20, 20]) { const leg = rod(1.6, metal); placeBetween(leg, V(mid.x + dx, mid.y - 4, 0), V(mid.x + dx * 1.15, 0, 0)); leg.material = frame; }
       } else if (pr.k === 'bar') {
         const y = 200 - pr.y, x = (pr.x1 + pr.x2) / 2 - 120;
         const bar = rod(1.4, metal); placeBetween(bar, V(x, y, -38), V(x, y, 38));
-        for (const z of [-38, 38]) { const post = rod(2, dark); placeBetween(post, V(x, y, z), V(x, 0, z)); }
+        for (const z of [-38, 38]) { const post = rod(2, frame); placeBetween(post, V(x, y, z), V(x, 0, z)); }
       } else if (pr.k === 'box') {
         const b = box(pr.w, 200 - pr.y, 40, dark); b.position.set(pr.x + pr.w / 2 - 120, (200 - pr.y) / 2, 0);
       } else if (pr.k === 'roller') {
@@ -299,7 +319,7 @@ class Equipment {
     this.kind = kind;
     this.anchor = ['cable', 'machine', 'band'].includes(kind) && (kind === 'band' ? pat.band || pat.anchor : pat.anchor) ? P(kind === 'band' ? pat.band || pat.anchor : pat.anchor) : null;
     if (this.anchor && kind !== 'band') {
-      const col = box(6, 210, 10, dark); col.position.set(this.anchor.x + 7, 105, 0);
+      const col = box(6, 210, 10, frame); col.position.set(this.anchor.x + 7, 105, 0);
       const pul = this.add(new THREE.Mesh(SPH, metal)); pul.position.copy(this.anchor); pul.scale.setScalar(3.2);
     }
     // held equipment, moved every frame
@@ -360,20 +380,20 @@ function makeStage(canvas, { shadows = true, preserve = false } = {}) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: preserve });
   renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.15;
+  renderer.toneMapping = THREE.NoToneMapping;
   renderer.shadowMap.enabled = shadows;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(30, 1, 1, 3000);
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x50555f, 1.25));
-  const key = new THREE.DirectionalLight(0xffffff, 1.9);
-  key.position.set(160, 260, 140);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x8a8682, 1.55));
+  const key = new THREE.DirectionalLight(0xffffff, 1.55);
+  key.position.set(70, 340, 90);
   key.castShadow = shadows;
   key.shadow.mapSize.set(1024, 1024);
-  Object.assign(key.shadow.camera, { left: -150, right: 150, top: 150, bottom: -150, near: 10, far: 700 });
+  Object.assign(key.shadow.camera, { left: -220, right: 220, top: 220, bottom: -220, near: 10, far: 900 });
   scene.add(key);
-  const rim = new THREE.DirectionalLight(0xbfd4ff, 1.1); rim.position.set(-200, 120, -160); scene.add(rim);
-  const floor = new THREE.Mesh(new THREE.CircleGeometry(115, 64), new THREE.MeshStandardMaterial({ color: 0x3a3f47, roughness: 1, transparent: true, opacity: 0.55 }));
+  const fill = new THREE.DirectionalLight(0xffffff, 0.55); fill.position.set(-200, 80, -160); scene.add(fill);
+  const floor = new THREE.Mesh(new THREE.CircleGeometry(400, 64), new THREE.ShadowMaterial({ opacity: 0.13 }));
   floor.rotation.x = -Math.PI / 2; floor.position.y = -0.4; floor.receiveShadow = true;
   scene.add(floor);
   const body = new Body(); scene.add(body.root);
@@ -403,13 +423,13 @@ export function defaultPitch(pat, pm = []) {
   if (pat.supine && pm.some((m) => BACK_GROUPS.has(m))) return 16; // e.g. bridges: glutes face the floor
   const J = joints3d(solve(pat.frames[workFrame(pat)], pat.view));
   const d = V().subVectors(J.shoC, J.hipC).normalize();
-  return Math.abs(d.y) < 0.55 ? 42 : 12;
+  return Math.abs(d.y) < 0.55 ? 42 : 20;
 }
 
 function placeCamera(camera, box, yaw, pitch, aspect, zoom = 1, focus = null) {
   const c = (focus || box).getCenter(V()), size = box.getSize(V());
   const r = focus ? Math.max(28, focus.getSize(V()).length() * 0.62 + 20) : Math.max(size.y * 0.62, Math.hypot(size.x, size.z) * 0.5 / Math.max(aspect, 0.6), 60);
-  const dist = (r / Math.tan((camera.fov * Math.PI) / 360)) * 1.08 / zoom;
+  const dist = (r / Math.tan((camera.fov * Math.PI) / 360)) * 0.98 / zoom;
   const y = (yaw * Math.PI) / 180, p = (pitch * Math.PI) / 180;
   camera.aspect = aspect;
   camera.position.set(c.x + dist * Math.cos(p) * Math.cos(y), c.y + dist * Math.sin(p), c.z + dist * Math.cos(p) * Math.sin(y));
