@@ -1,0 +1,33 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Pattern preview</title>
+<link rel="stylesheet" href="../css/app.css">
+<style>
+  body { background: #fff; color: #111; padding: 8px; font: 11px sans-serif; }
+  .grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
+  .cell { border: 1px solid #ddd; border-radius: 6px; padding: 4px; }
+  .cell svg { width: 100%; height: auto; display: block; }
+  .row { display: flex; gap: 2px; }
+</style>
+<div class="grid" id="g"></div><script>document.documentElement.dataset.theme='light'</script>
+<script type="module">
+  import { PATTERNS, renderPose } from '../js/anim.js';
+  const q = new URLSearchParams(location.search);
+  const hold = q.get('hold') || 'dumbbell';
+  const only = q.get('only'); if (q.get('cols')) document.getElementById('g').style.gridTemplateColumns = `repeat(${q.get('cols')}, 1fr)`;
+  const g = document.getElementById('g');
+  for (const [id, p] of Object.entries(PATTERNS)) {
+    if (only && !only.split(',').includes(id)) continue;
+    const c = document.createElement('div'); c.className = 'cell';
+    c.innerHTML = `<b>${id}</b>`;
+    const r = document.createElement('div'); r.className = 'row';
+    for (const f of p.frames) {
+      const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      s.setAttribute('viewBox', '0 0 240 210'); s.classList.add('fig');
+      renderPose(s, p, f, p.hold === 'none' ? 'none' : hold);
+      r.appendChild(s);
+    }
+    c.appendChild(r); g.appendChild(c);
+  }
+  document.body.dataset.done = '1';
+</script>
